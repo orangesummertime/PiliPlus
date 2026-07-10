@@ -1,11 +1,23 @@
 import 'package:flex_seed_scheme/flex_seed_scheme.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart'
+    show ThemeData, Color, ColorScheme, Brightness, Colors;
 
 const _pinkLight = Color(0xFFFF6699);
 const _pinkDark = Color(0xFFD44E7D);
 
+const _blueLight = Color(0xFF008AC5);
+const _blueDark = Color(0xFF2C9CC8);
+
+extension ThemeDataExt on ThemeData {
+  bool get isLight => brightness.isLight;
+
+  bool get isDark => brightness.isDark;
+}
+
 extension ColorSchemeExt on ColorScheme {
   Color get vipColor => brightness.isLight ? _pinkLight : _pinkDark;
+
+  Color get blue => brightness.isLight ? _blueLight : _blueDark;
 
   Color get btnColor =>
       brightness.isLight ? _pinkLight : const Color(0xFF8F0030);

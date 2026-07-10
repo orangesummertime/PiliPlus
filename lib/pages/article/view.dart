@@ -5,6 +5,7 @@ import 'package:PiliPlus/common/widgets/custom_icon.dart';
 import 'package:PiliPlus/common/widgets/flutter/refresh_indicator.dart';
 import 'package:PiliPlus/common/widgets/image/network_img_layer.dart';
 import 'package:PiliPlus/common/widgets/scroll_physics.dart';
+import 'package:PiliPlus/common/widgets/sliver/sliver_to_box_adapter.dart';
 import 'package:PiliPlus/models/common/badge_type.dart';
 import 'package:PiliPlus/models/common/image_preview_type.dart';
 import 'package:PiliPlus/models/common/image_type.dart';
@@ -22,8 +23,9 @@ import 'package:PiliPlus/utils/grid.dart';
 import 'package:PiliPlus/utils/image_utils.dart';
 import 'package:PiliPlus/utils/num_utils.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
+import 'package:PiliPlus/utils/share_utils.dart';
 import 'package:PiliPlus/utils/utils.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cached_network_image_ce/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -50,56 +52,49 @@ class _ArticlePageState extends CommonDynPageState<ArticlePage> {
   };
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (scrollController.hasClients) {
-        controller.showTitle.value =
-            scrollController.positions.last.pixels >= 45;
-      }
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
+    final child = Scaffold(
       resizeToAvoidBottomInset: false,
       appBar: _buildAppBar(),
       body: Padding(
         padding: EdgeInsets.only(left: padding.left, right: padding.right),
-        child: _buildPage(theme),
+        child: _buildPage(),
       ),
       floatingActionButtonLocation: floatingActionButtonLocation,
       floatingActionButton: SlideTransition(
         position: fabAnimation,
-        child: _buildBottom(theme),
+        child: _buildBottom(),
       ),
     );
+    return fabAnimWrapper(child);
   }
 
-  Widget _buildPage(ThemeData theme) {
+  Widget _buildPage() {
     double padding = max(maxWidth / 2 - Grid.smallCardWidth, 0);
     if (isPortrait) {
       return Padding(
         padding: EdgeInsets.symmetric(horizontal: padding),
-        child: CustomScrollView(
-          controller: scrollController,
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            _buildContent(
-              theme,
-              maxWidth - this.padding.horizontal - 2 * padding - 24,
-            ),
-            SliverToBoxAdapter(
-              child: Divider(
-                thickness: 8,
-                color: theme.dividerColor.withValues(alpha: 0.05),
+        child: SelectionArea(
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              _buildContent(
+                maxWidth - this.padding.horizontal - 2 * padding - 24,
               ),
-            ),
-            buildReplyHeader(theme),
-            Obx(() => replyList(theme, controller.loadingState.value)),
-          ],
+              SelectionContainer.disabled(
+                child: SliverToBoxAdapter(
+                  child: Divider(
+                    thickness: 8,
+                    color: theme.dividerColor.withValues(alpha: 0.05),
+                  ),
+                ),
+              ),
+              SelectionContainer.disabled(child: buildReplyHeader()),
+              SelectionContainer.disabled(
+                child: Obx(() => replyList(controller.loadingState.value)),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -112,23 +107,25 @@ class _ArticlePageState extends CommonDynPageState<ArticlePage> {
       children: [
         Expanded(
           flex: flex,
-          child: CustomScrollView(
-            controller: scrollController,
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              SliverPadding(
-                padding: EdgeInsets.only(
-                  left: padding,
-                  bottom: this.padding.bottom + 100,
+          child: SelectionArea(
+            child: CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverPadding(
+                  padding: EdgeInsets.only(
+                    left: padding,
+                    bottom: this.padding.bottom + 100,
+                  ),
+                  sliver: _buildContent(
+                    (maxWidth - this.padding.horizontal) *
+                            flex /
+                            (flex + flex1) -
+                        padding -
+                        32,
+                  ),
                 ),
-                sliver: _buildContent(
-                  theme,
-                  (maxWidth - this.padding.horizontal) * flex / (flex + flex1) -
-                      padding -
-                      32,
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         VerticalDivider(
@@ -145,11 +142,10 @@ class _ArticlePageState extends CommonDynPageState<ArticlePage> {
               body: refreshIndicator(
                 onRefresh: controller.onRefresh,
                 child: CustomScrollView(
-                  controller: scrollController,
                   physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
-                    buildReplyHeader(theme),
-                    Obx(() => replyList(theme, controller.loadingState.value)),
+                    buildReplyHeader(),
+                    Obx(() => replyList(controller.loadingState.value)),
                   ],
                 ),
               ),
@@ -160,21 +156,22 @@ class _ArticlePageState extends CommonDynPageState<ArticlePage> {
     );
   }
 
-  Widget _buildContent(ThemeData theme, double maxWidth) => SliverPadding(
+  Widget _buildContent(double maxWidth) => SliverPadding(
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     sliver: Obx(
       () {
         if (controller.isLoaded.value) {
-          late Widget content;
+          final Widget content;
           if (controller.opus != null) {
             // if (kDebugMode) debugPrint('json page');
             content = OpusContent(
               opus: controller.opus!,
+              images: controller.images,
               maxWidth: maxWidth,
             );
-          } else if (controller.opusData?.modules.moduleBlocked != null) {
+          } else if (controller.opusData?.modules.moduleBlocked
+              case final moduleBlocked?) {
             // if (kDebugMode) debugPrint('moduleBlocked');
-            final moduleBlocked = controller.opusData!.modules.moduleBlocked!;
             content = SliverToBoxAdapter(
               child: moduleBlockedItem(context, theme, moduleBlocked),
             );
@@ -214,130 +211,123 @@ class _ArticlePageState extends CommonDynPageState<ArticlePage> {
             content = const SliverToBoxAdapter(child: Text('NULL'));
           }
 
-          int? pubTime =
+          final pubTime =
               controller.opusData?.modules.moduleAuthor?.pubTs ??
               controller.articleData?.publishTime;
           return SliverMainAxisGroup(
             slivers: [
-              if (controller.type != 'read' &&
-                  controller
-                          .opusData
-                          ?.modules
-                          .moduleTop
-                          ?.display
-                          ?.album
-                          ?.pics
-                          ?.isNotEmpty ==
-                      true)
-                SliverToBoxAdapter(
-                  child: Builder(
-                    builder: (context) {
-                      final pics = controller
-                          .opusData!
-                          .modules
-                          .moduleTop!
-                          .display!
-                          .album!
-                          .pics!;
-                      final length = pics.length;
-                      final first = pics.first;
-                      double height;
-                      if (first.height != null && first.width != null) {
-                        final ratio = first.height! / first.width!;
-                        height = min(maxWidth * ratio, maxHeight * 0.55);
-                      } else {
-                        height = maxHeight * 0.55;
-                      }
-                      return Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Container(
-                            height: height,
-                            width: maxWidth,
-                            margin: const EdgeInsets.only(bottom: 10),
-                            child: PageView.builder(
-                              physics: clampingScrollPhysics,
-                              onPageChanged: (value) =>
-                                  controller.topIndex.value = value,
-                              itemCount: length,
-                              itemBuilder: (context, index) {
-                                final pic = pics[index];
-                                int? memCacheWidth, memCacheHeight;
-                                if (pic.isLongPic ?? false) {
-                                  memCacheWidth = maxWidth.cacheSize(context);
-                                } else if (pic.width != null &&
-                                    pic.height != null) {
-                                  if (pic.width! > pic.height!) {
+              if (controller.type != 'read')
+                if (controller.opusData?.modules.moduleTop?.display?.album?.pics
+                    case final pics? when pics.isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: Builder(
+                      builder: (context) {
+                        final length = pics.length;
+                        final first = pics.first;
+                        double height;
+                        if (first.height != null && first.width != null) {
+                          final ratio = first.height! / first.width!;
+                          height = min(maxWidth * ratio, maxHeight * 0.55);
+                        } else {
+                          height = maxHeight * 0.55;
+                        }
+                        return Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Container(
+                              height: height,
+                              width: maxWidth,
+                              margin: const EdgeInsets.only(bottom: 10),
+                              child: PageView.builder(
+                                physics: clampingScrollPhysics,
+                                onPageChanged: (value) =>
+                                    controller.topIndex.value = value,
+                                itemCount: length,
+                                itemBuilder: (context, index) {
+                                  final pic = pics[index];
+                                  int? memCacheWidth, memCacheHeight;
+                                  if (pic.isLongPic ?? false) {
                                     memCacheWidth = maxWidth.cacheSize(context);
-                                  } else {
-                                    memCacheHeight = height.cacheSize(context);
+                                  } else if (pic.width != null &&
+                                      pic.height != null) {
+                                    if (pic.width! > pic.height!) {
+                                      memCacheWidth = maxWidth.cacheSize(
+                                        context,
+                                      );
+                                    } else {
+                                      memCacheHeight = height.cacheSize(
+                                        context,
+                                      );
+                                    }
                                   }
-                                }
-                                return GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: () => PageUtils.imageView(
-                                    quality: 60,
-                                    imgList: pics
-                                        .map((e) => SourceModel(url: e.url!))
-                                        .toList(),
-                                    initialPage: index,
-                                  ),
-                                  child: Hero(
-                                    tag: pic.url!,
-                                    child: Stack(
-                                      clipBehavior: Clip.none,
-                                      alignment: Alignment.center,
-                                      children: [
-                                        CachedNetworkImage(
-                                          height: height,
-                                          width: maxWidth,
-                                          memCacheWidth: memCacheWidth,
-                                          memCacheHeight: memCacheHeight,
-                                          fit: pic.isLongPic == true
-                                              ? BoxFit.cover
-                                              : null,
-                                          imageUrl: ImageUtils.thumbnailUrl(
-                                            pic.url,
-                                            60,
-                                          ),
-                                          fadeInDuration: const Duration(
-                                            milliseconds: 120,
-                                          ),
-                                          fadeOutDuration: const Duration(
-                                            milliseconds: 120,
-                                          ),
-                                          placeholder: (_, _) =>
-                                              const SizedBox.shrink(),
-                                        ),
-                                        if (pic.isLongPic == true)
-                                          const PBadge(
-                                            right: 12,
-                                            bottom: 12,
-                                            text: '长图',
-                                            type: .primary,
-                                          ),
-                                      ],
+                                  return GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: () => PageUtils.imageView(
+                                      quality: 60,
+                                      imgList: pics
+                                          .map((e) => SourceModel(url: e.url!))
+                                          .toList(),
+                                      initialPage: index,
                                     ),
-                                  ),
-                                );
-                              },
+                                    child: Hero(
+                                      tag: pic.url!,
+                                      child: Stack(
+                                        clipBehavior: Clip.none,
+                                        alignment: Alignment.center,
+                                        children: [
+                                          CachedNetworkImage(
+                                            height: height,
+                                            width: maxWidth,
+                                            memCacheWidth: memCacheWidth,
+                                            memCacheHeight: memCacheHeight,
+                                            fit: pic.isLongPic == true
+                                                ? BoxFit.cover
+                                                : null,
+                                            imageUrl: ImageUtils.thumbnailUrl(
+                                              pic.url,
+                                              60,
+                                            ),
+                                            fadeInDuration: const Duration(
+                                              milliseconds: 120,
+                                            ),
+                                            fadeOutDuration: const Duration(
+                                              milliseconds: 120,
+                                            ),
+                                            placeholder: (_, _) =>
+                                                const SizedBox.shrink(),
+                                          ),
+                                          if (pic.isLongPic == true)
+                                            const PBadge(
+                                              right: 12,
+                                              bottom: 12,
+                                              text: '长图',
+                                              type: .primary,
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
-                          ),
-                          Obx(
-                            () => PBadge(
-                              top: 12,
-                              right: 12,
-                              type: PBadgeType.gray,
-                              text: '${controller.topIndex.value + 1}/$length',
+                            Obx(
+                              () => PBadge(
+                                top: 12,
+                                right: 12,
+                                type: PBadgeType.gray,
+                                text:
+                                    '${controller.topIndex.value + 1}/$length',
+                              ),
                             ),
-                          ),
-                        ],
-                      );
-                    },
+                          ],
+                        );
+                      },
+                    ),
                   ),
-                ),
               if (controller.summary.title != null)
-                SliverToBoxAdapter(
+                SliverToBoxWithVisibilityAdapter(
+                  onVisibilityChanged: (bool visible) =>
+                      controller.showTitle.value = !visible,
                   child: Text(
                     controller.summary.title!,
                     style: const TextStyle(
@@ -353,39 +343,41 @@ class _ArticlePageState extends CommonDynPageState<ArticlePage> {
                     onTap: () => Get.toNamed(
                       '/member?mid=${controller.summary.author?.mid}',
                     ),
-                    child: Row(
-                      children: [
-                        NetworkImgLayer(
-                          width: 40,
-                          height: 40,
-                          type: ImageType.avatar,
-                          src: controller.summary.author?.face,
-                        ),
-                        const SizedBox(width: 10),
-                        Flexible(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                controller.summary.author?.name ?? '',
-                                style: TextStyle(
-                                  fontSize:
-                                      theme.textTheme.titleSmall!.fontSize,
-                                ),
-                              ),
-                              if (pubTime != null)
+                    child: SelectionContainer.disabled(
+                      child: Row(
+                        children: [
+                          NetworkImgLayer(
+                            width: 40,
+                            height: 40,
+                            type: ImageType.avatar,
+                            src: controller.summary.author?.face,
+                          ),
+                          const SizedBox(width: 10),
+                          Flexible(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
                                 Text(
-                                  DateFormatUtils.format(pubTime),
+                                  controller.summary.author?.name ?? '',
                                   style: TextStyle(
-                                    color: theme.colorScheme.outline,
                                     fontSize:
-                                        theme.textTheme.labelSmall!.fontSize,
+                                        theme.textTheme.titleSmall!.fontSize,
                                   ),
                                 ),
-                            ],
+                                if (pubTime != null)
+                                  Text(
+                                    DateFormatUtils.format(pubTime),
+                                    style: TextStyle(
+                                      color: theme.colorScheme.outline,
+                                      fontSize:
+                                          theme.textTheme.labelSmall!.fontSize,
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -393,9 +385,11 @@ class _ArticlePageState extends CommonDynPageState<ArticlePage> {
               if (controller.type != 'read' &&
                   controller.opusData?.modules.moduleCollection != null)
                 SliverToBoxAdapter(
-                  child: opusCollection(
-                    theme,
-                    controller.opusData!.modules.moduleCollection!,
+                  child: SelectionContainer.disabled(
+                    child: opusCollection(
+                      theme,
+                      controller.opusData!.modules.moduleCollection!,
+                    ),
                   ),
                 ),
               content,
@@ -427,7 +421,7 @@ class _ArticlePageState extends CommonDynPageState<ArticlePage> {
         icon: const Icon(Icons.more_vert, size: 19),
         itemBuilder: (BuildContext context) => <PopupMenuEntry>[
           PopupMenuItem(
-            onTap: () => Utils.shareText(controller.url),
+            onTap: () => ShareUtils.shareText(controller.url),
             child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -493,7 +487,7 @@ class _ArticlePageState extends CommonDynPageState<ArticlePage> {
     ],
   );
 
-  Widget _buildBottom(ThemeData theme) {
+  Widget _buildBottom() {
     if (!controller.showDynActionBar) {
       return fabButton;
     }
@@ -620,7 +614,7 @@ class _ArticlePageState extends CommonDynPageState<ArticlePage> {
                       text: '分享',
                       icon: CustomIcons.share_node,
                       stat: null,
-                      onPressed: () => Utils.shareText(controller.url),
+                      onPressed: () => ShareUtils.shareText(controller.url),
                     ),
                   ),
                   Expanded(

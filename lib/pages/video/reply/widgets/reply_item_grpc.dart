@@ -4,6 +4,8 @@ import 'package:PiliPlus/common/assets.dart';
 import 'package:PiliPlus/common/constants.dart';
 import 'package:PiliPlus/common/style.dart';
 import 'package:PiliPlus/common/widgets/badge.dart';
+import 'package:PiliPlus/common/widgets/custom_icon.dart';
+import 'package:PiliPlus/common/widgets/dialog/dialog.dart';
 import 'package:PiliPlus/common/widgets/dialog/report.dart';
 import 'package:PiliPlus/common/widgets/extra_hit_test_widget.dart';
 import 'package:PiliPlus/common/widgets/flutter/text/text.dart' as custom_text;
@@ -13,8 +15,7 @@ import 'package:PiliPlus/common/widgets/image_grid/image_grid_view.dart';
 import 'package:PiliPlus/common/widgets/pendant_avatar.dart';
 import 'package:PiliPlus/grpc/reply.dart';
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
-    show ReplyInfo, ReplyControl, Content, Url;
-import 'package:PiliPlus/grpc/reply.dart';
+    show ReplyInfo, ReplyControl, Content, Url, ReplyControl_VoteOption;
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/http/reply.dart';
 import 'package:PiliPlus/http/video.dart';
@@ -27,6 +28,8 @@ import 'package:PiliPlus/pages/video/controller.dart';
 import 'package:PiliPlus/pages/video/reply/widgets/zan_grpc.dart';
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/app_scheme.dart';
+import 'package:PiliPlus/utils/bili_utils.dart';
+import 'package:PiliPlus/utils/color_utils.dart';
 import 'package:PiliPlus/utils/danmaku_utils.dart';
 import 'package:PiliPlus/utils/date_utils.dart';
 import 'package:PiliPlus/utils/duration_utils.dart';
@@ -43,8 +46,7 @@ import 'package:PiliPlus/utils/storage_key.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/url_utils.dart';
 import 'package:PiliPlus/utils/utils.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:characters/characters.dart';
+import 'package:cached_network_image_ce/cached_network_image.dart';
 import 'package:fixnum/fixnum.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
@@ -88,50 +90,9 @@ class ReplyItemGrpc extends StatelessWidget {
   static bool enableWordRe = Pref.enableWordRe;
   static int? replyLengthLimit = Pref.replyLengthLimit;
 
-  static Future<bool> addReplyBanWord(String keyword) async {
-    final normalized = keyword.trim();
-    if (normalized.isEmpty) {
-      SmartDialog.showToast('请选择要屏蔽的内容');
-      return false;
-    }
-
-    final escaped = RegExp.escape(normalized);
-    final current = Pref.banWordForReply;
-    final items = current.isEmpty ? const <String>[] : current.split('|');
-    if (items.contains(escaped)) {
-      SmartDialog.showToast('该关键词已存在');
-      return false;
-    }
-
-    final next = current.isEmpty ? escaped : '$current|$escaped';
-    await GStorage.setting.put(SettingBoxKey.banWordForReply, next);
-    ReplyGrpc.replyRegExp = RegExp(next, caseSensitive: false);
-    ReplyGrpc.enableFilter = true;
-    SmartDialog.showToast('已加入评论过滤关键词');
-    return true;
-  }
-
-  void showReplyBanWordDialog(
-    BuildContext context,
-    ReplyInfo item,
-    VoidCallback onDelete,
-  ) {
-    Future<void>.delayed(Duration.zero, () {
-      final currentContext = Get.context ?? context;
-      showDialog(
-        context: currentContext,
-        builder: (dialogContext) => _ReplyBanWordDialog(
-          message: item.content.message,
-          item: item,
-          onDelete: onDelete,
-        ),
-      );
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
+    final colorScheme = ColorScheme.of(context);
 
     void showMore() => showModalBottomSheet(
       context: context,
@@ -152,7 +113,7 @@ class ReplyItemGrpc extends StatelessWidget {
 
     Widget child = Padding(
       padding: const .fromLTRB(12, 14, 8, 5),
-      child: _buildContent(context, theme),
+      child: _buildContent(context, colorScheme),
     );
     if (needDivider) {
       child = Column(
@@ -163,7 +124,7 @@ class ReplyItemGrpc extends StatelessWidget {
             indent: 55,
             endIndent: 15,
             height: 0.3,
-            color: theme.colorScheme.outline.withValues(alpha: 0.08),
+            color: colorScheme.outline.withValues(alpha: 0.08),
           ),
         ],
       );
@@ -179,7 +140,7 @@ class ReplyItemGrpc extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context, ThemeData theme) {
+  Widget _buildHeader(BuildContext context, ColorScheme colorScheme) {
     final member = replyItem.member;
     Widget header = GestureDetector(
       onTap: () {
@@ -217,19 +178,16 @@ class ReplyItemGrpc extends StatelessWidget {
                           overflow: .ellipsis,
                           style: TextStyle(
                             color: (member.vipStatus > 0 && member.vipType == 2)
-                                ? theme.colorScheme.vipColor
-                                : theme.colorScheme.outline,
+                                ? colorScheme.vipColor
+                                : colorScheme.outline,
                             fontSize: 13,
                           ),
                         ),
                       ),
-                      Image.asset(
-                        Utils.levelName(
-                          member.level,
-                          isSeniorMember: member.isSeniorMember == 1,
-                        ),
+                      BiliUtils.levelPicture(
+                        member.level.toInt(),
+                        isSeniorMember: member.isSeniorMember == 1,
                         height: 11,
-                        cacheHeight: 11.cacheSize(context),
                       ),
                       if (replyItem.mid == upMid)
                         const PBadge(
@@ -269,16 +227,16 @@ class ReplyItemGrpc extends StatelessWidget {
                                 replyItem.ctime.toInt(),
                               ),
                         style: TextStyle(
-                          fontSize: theme.textTheme.labelSmall!.fontSize,
-                          color: theme.colorScheme.outline,
+                          fontSize: 11,
+                          color: colorScheme.outline,
                         ),
                       ),
                       if (replyItem.replyControl.hasLocation())
                         Text(
                           ' • ${replyItem.replyControl.location}',
                           style: TextStyle(
-                            fontSize: theme.textTheme.labelSmall!.fontSize,
-                            color: theme.colorScheme.outline,
+                            fontSize: 11,
+                            color: colorScheme.outline,
                           ),
                         ),
                     ],
@@ -319,7 +277,7 @@ class ReplyItemGrpc extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 8,
                       fontFamily: Assets.digitalNum,
-                      color: Utils.parseColor(garb.cardFanColor),
+                      color: ColourUtils.parseColor(garb.cardFanColor),
                     ),
                   ),
                 ),
@@ -335,23 +293,57 @@ class ReplyItemGrpc extends StatelessWidget {
     return header;
   }
 
-  Widget _buildContent(BuildContext context, ThemeData theme) {
+  Widget _buildVoteOption(
+    ColorScheme colorScheme,
+    ReplyControl_VoteOption voteOption,
+  ) {
+    return Text.rich(
+      TextSpan(
+        children: [
+          switch (voteOption.labelKind) {
+            .RED => TextSpan(
+              text: '红方  ',
+              style: TextStyle(color: colorScheme.vipColor),
+            ),
+            .BLUE => TextSpan(
+              text: '蓝方  ',
+              style: TextStyle(color: colorScheme.blue),
+            ),
+            _ => TextSpan(
+              text: '投票  ',
+              style: TextStyle(color: colorScheme.outline),
+            ),
+          },
+          TextSpan(text: voteOption.desc),
+        ],
+      ),
+      style: TextStyle(
+        height: 1.75,
+        fontSize: 12,
+        color: colorScheme.onSurfaceVariant,
+      ),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, ColorScheme colorScheme) {
     final replyControl = replyItem.replyControl;
     final padding = EdgeInsets.only(left: replyLevel == 0 ? 6 : 45, right: 6);
     return Column(
       mainAxisSize: .min,
       crossAxisAlignment: .start,
       children: [
-        _buildHeader(context, theme),
+        _buildHeader(context, colorScheme),
         const SizedBox(height: 10),
+        if (replyControl.hasVoteOption())
+          Padding(
+            padding: padding,
+            child: _buildVoteOption(colorScheme, replyControl.voteOption),
+          ),
         Padding(
           padding: padding,
           child: custom_text.Text.rich(
-            primary: theme.colorScheme.primary,
-            style: TextStyle(
-              height: 1.75,
-              fontSize: theme.textTheme.bodyMedium!.fontSize,
-            ),
+            primary: colorScheme.primary,
+            style: const TextStyle(height: 1.75, fontSize: 14),
             maxLines: replyLevel == 1 ? replyLengthLimit : null,
             TextSpan(
               children: [
@@ -371,7 +363,7 @@ class ReplyItemGrpc extends StatelessWidget {
                 ],
                 _buildMessage(
                   context,
-                  theme,
+                  colorScheme,
                   replyControl.showTranslation
                       ? replyItem.translatedContent
                       : replyItem.content,
@@ -401,12 +393,12 @@ class ReplyItemGrpc extends StatelessWidget {
         ],
         if (replyLevel != 0) ...[
           const SizedBox(height: 4),
-          buttonAction(context, theme, replyControl),
+          buttonAction(context, colorScheme, replyControl),
         ],
         if (replyLevel == 1 && replyItem.count > Int64.ZERO) ...[
           Padding(
             padding: const EdgeInsets.only(top: 5, bottom: 12),
-            child: replyItemRow(context, theme, replyItem.replies),
+            child: replyItemRow(context, colorScheme, replyItem.replies),
           ),
         ],
       ],
@@ -415,15 +407,15 @@ class ReplyItemGrpc extends StatelessWidget {
 
   Widget _buildTranslateBtn(
     BuildContext context,
-    ThemeData theme,
+    ColorScheme colorScheme,
     ReplyControl replyControl,
     TextStyle textStyle,
     ButtonStyle buttonStyle,
   ) {
     late bool isProcessing = false;
     final color = replyControl.showTranslation
-        ? theme.colorScheme.primary
-        : theme.colorScheme.outline.withValues(alpha: 0.8);
+        ? colorScheme.primary
+        : colorScheme.outline.withValues(alpha: 0.8);
     return SizedBox(
       height: 32,
       child: TextButton(
@@ -481,20 +473,41 @@ class ReplyItemGrpc extends StatelessWidget {
 
   Widget buttonAction(
     BuildContext context,
-    ThemeData theme,
+    ColorScheme colorScheme,
     ReplyControl replyControl,
   ) {
     final textStyle = TextStyle(
       height: 1,
+      fontSize: 12,
       fontWeight: .normal,
-      color: theme.colorScheme.outline,
-      fontSize: theme.textTheme.labelMedium!.fontSize,
+      color: colorScheme.outline,
     );
     const buttonStyle = ButtonStyle(
       visualDensity: .compact,
       tapTargetSize: .shrinkWrap,
       padding: WidgetStatePropertyAll(.zero),
     );
+
+    Widget? dialogBtn;
+    if (replyLevel == 2 && needDivider && replyItem.id != replyItem.dialog) {
+      dialogBtn = SizedBox(
+        height: 32,
+        child: TextButton(
+          onPressed: showDialogue,
+          style: buttonStyle,
+          child: Text('查看对话', style: textStyle),
+        ),
+      );
+    } else if (replyLevel == 3 && replyItem.parent != replyItem.root) {
+      dialogBtn = SizedBox(
+        height: 32,
+        child: TextButton(
+          onPressed: jumpToDialogue,
+          style: buttonStyle,
+          child: Text('跳转回复', style: textStyle),
+        ),
+      );
+    }
     return Row(
       children: [
         const SizedBox(width: 36),
@@ -513,7 +526,7 @@ class ReplyItemGrpc extends StatelessWidget {
                 Icon(
                   Icons.reply,
                   size: 18,
-                  color: theme.colorScheme.outline.withValues(alpha: 0.8),
+                  color: colorScheme.outline.withValues(alpha: 0.8),
                 ),
                 Text('回复', style: textStyle),
               ],
@@ -525,41 +538,22 @@ class ReplyItemGrpc extends StatelessWidget {
             .TRANSLATION_SWITCH_SHOW_TRANSLATION) ...[
           _buildTranslateBtn(
             context,
-            theme,
+            colorScheme,
             replyControl,
             textStyle,
             buttonStyle,
           ),
           const SizedBox(width: 2),
-        ] else if (replyItem.replyControl.cardLabels.isNotEmpty) ...[
+        ] else if (replyControl.cardLabels.isNotEmpty) ...[
           Text(
-            replyItem.replyControl.cardLabels
-                .map((e) => e.textContent)
-                .join('  '),
-            style: textStyle.copyWith(color: theme.colorScheme.secondary),
+            dialogBtn != null
+                ? replyControl.cardLabels.first.textContent
+                : replyControl.cardLabels.map((e) => e.textContent).join('  '),
+            style: textStyle.copyWith(color: colorScheme.secondary),
           ),
           const SizedBox(width: 2),
         ],
-        if (replyLevel == 2 && needDivider && replyItem.id != replyItem.dialog)
-          SizedBox(
-            height: 32,
-            child: TextButton(
-              onPressed: showDialogue,
-              style: buttonStyle,
-              child: Text('查看对话', style: textStyle),
-            ),
-          )
-        else if (replyLevel == 3 &&
-            needDivider &&
-            replyItem.parent != replyItem.root)
-          SizedBox(
-            height: 32,
-            child: TextButton(
-              onPressed: jumpToDialogue,
-              style: buttonStyle,
-              child: Text('跳转回复', style: textStyle),
-            ),
-          ),
+        ?dialogBtn,
         const Spacer(),
         ZanButtonGrpc(replyItem: replyItem),
         const SizedBox(width: 5),
@@ -569,7 +563,7 @@ class ReplyItemGrpc extends StatelessWidget {
 
   Widget replyItemRow(
     BuildContext context,
-    ThemeData theme,
+    ColorScheme colorScheme,
     List<ReplyInfo> replies,
   ) {
     final extraRow = replies.length < replyItem.count.toInt();
@@ -577,7 +571,7 @@ class ReplyItemGrpc extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(left: 42, right: 4),
       child: Material(
-        color: theme.colorScheme.onInverseSurface,
+        color: colorScheme.onInverseSurface,
         borderRadius: const BorderRadius.all(Radius.circular(6)),
         clipBehavior: Clip.hardEdge,
         animationDuration: Duration.zero,
@@ -624,11 +618,9 @@ class ReplyItemGrpc extends StatelessWidget {
                     padding: padding,
                     child: Text.rich(
                       style: TextStyle(
-                        fontSize: theme.textTheme.bodyMedium!.fontSize,
-                        color: theme.colorScheme.onSurface.withValues(
-                          alpha: 0.85,
-                        ),
                         height: 1.6,
+                        fontSize: 14,
+                        color: colorScheme.onSurface.withValues(alpha: 0.85),
                       ),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 2,
@@ -636,9 +628,7 @@ class ReplyItemGrpc extends StatelessWidget {
                         children: [
                           TextSpan(
                             text: childReply.member.name,
-                            style: TextStyle(
-                              color: theme.colorScheme.primary,
-                            ),
+                            style: TextStyle(color: colorScheme.primary),
                             recognizer: NoDeadlineTapGestureRecognizer()
                               ..onTap = () {
                                 feedBack();
@@ -670,7 +660,7 @@ class ReplyItemGrpc extends StatelessWidget {
                           ),
                           _buildMessage(
                             context,
-                            theme,
+                            colorScheme,
                             childReply.content,
                             childReply.replyControl,
                           ),
@@ -689,15 +679,13 @@ class ReplyItemGrpc extends StatelessWidget {
                       : const EdgeInsets.fromLTRB(8, 5, 8, 8),
                   child: Text.rich(
                     TextSpan(
-                      style: TextStyle(
-                        fontSize: theme.textTheme.labelMedium!.fontSize,
-                      ),
+                      style: const TextStyle(fontSize: 12),
                       children: [
                         if (replyItem.replyControl.upReply)
                           TextSpan(
                             text: 'UP主等人 ',
                             style: TextStyle(
-                              color: theme.colorScheme.onSurface.withValues(
+                              color: colorScheme.onSurface.withValues(
                                 alpha: 0.85,
                               ),
                             ),
@@ -705,7 +693,7 @@ class ReplyItemGrpc extends StatelessWidget {
                         TextSpan(
                           text: '共${replyItem.count}条回复',
                           style: TextStyle(
-                            color: theme.colorScheme.primary,
+                            color: colorScheme.primary,
                           ),
                         ),
                       ],
@@ -721,7 +709,7 @@ class ReplyItemGrpc extends StatelessWidget {
 
   InlineSpan _buildMessage(
     BuildContext context,
-    ThemeData theme,
+    ColorScheme colorScheme,
     Content content,
     ReplyControl replyControl,
   ) {
@@ -767,16 +755,14 @@ class ReplyItemGrpc extends StatelessWidget {
             child: CachedNetworkImage(
               height: 19,
               memCacheHeight: 19.cacheSize(context),
-              color: theme.colorScheme.primary,
+              color: colorScheme.primary,
               imageUrl: ImageUtils.thumbnailUrl(url.prefixIcon),
               placeholder: (_, _) => const SizedBox.shrink(),
             ),
           ),
         TextSpan(
           text: isCv ? '[笔记] ' : url.title,
-          style: TextStyle(
-            color: theme.colorScheme.primary,
-          ),
+          style: TextStyle(color: colorScheme.primary),
           recognizer: NoDeadlineTapGestureRecognizer()
             ..onTap = () {
               if (url.appUrlSchema.isEmpty) {
@@ -855,7 +841,7 @@ class ReplyItemGrpc extends StatelessWidget {
           spanChildren.add(
             TextSpan(
               text: matchStr,
-              style: TextStyle(color: theme.colorScheme.primary),
+              style: TextStyle(color: colorScheme.primary),
               recognizer: NoDeadlineTapGestureRecognizer()
                 ..onTap = () =>
                     Get.toNamed('/member?mid=${content.atNameToMid[name]}'),
@@ -865,7 +851,7 @@ class ReplyItemGrpc extends StatelessWidget {
           spanChildren.add(
             TextSpan(
               text: '投票: ${content.vote.title}',
-              style: TextStyle(color: theme.colorScheme.primary),
+              style: TextStyle(color: colorScheme.primary),
               recognizer: NoDeadlineTapGestureRecognizer()
                 ..onTap = () =>
                     showVoteDialog(context, content.vote.id.toInt()),
@@ -887,9 +873,7 @@ class ReplyItemGrpc extends StatelessWidget {
           spanChildren.add(
             TextSpan(
               text: isValid ? ' $matchStr ' : matchStr,
-              style: isValid
-                  ? TextStyle(color: theme.colorScheme.primary)
-                  : null,
+              style: isValid ? TextStyle(color: colorScheme.primary) : null,
               recognizer: isValid
                   ? (NoDeadlineTapGestureRecognizer()
                       ..onTap = () {
@@ -921,7 +905,7 @@ class ReplyItemGrpc extends StatelessWidget {
             spanChildren.add(
               TextSpan(
                 text: matchStr,
-                style: TextStyle(color: theme.colorScheme.primary),
+                style: TextStyle(color: colorScheme.primary),
                 recognizer: NoDeadlineTapGestureRecognizer()
                   ..onTap = () {
                     Get.toNamed(
@@ -935,7 +919,7 @@ class ReplyItemGrpc extends StatelessWidget {
             spanChildren.add(
               TextSpan(
                 text: matchStr,
-                style: TextStyle(color: theme.colorScheme.primary),
+                style: TextStyle(color: colorScheme.primary),
                 recognizer: NoDeadlineTapGestureRecognizer()
                   ..onTap = () => PageUtils.handleWebview(matchStr),
               ),
@@ -952,16 +936,16 @@ class ReplyItemGrpc extends StatelessWidget {
       },
     );
 
-    if (urlKeys.isNotEmpty) {
-      List<String> unmatchedItems = urlKeys
-          .where((url) => !matchedUrls.contains(url))
-          .toList();
-      if (unmatchedItems.isNotEmpty) {
-        for (final patternStr in unmatchedItems) {
-          addUrl(patternStr, content.urls[patternStr]!);
-        }
-      }
-    }
+    // if (urlKeys.isNotEmpty) {
+    //   List<String> unmatchedItems = urlKeys
+    //       .where((url) => !matchedUrls.contains(url))
+    //       .toList();
+    //   if (unmatchedItems.isNotEmpty) {
+    //     for (final patternStr in unmatchedItems) {
+    //       addUrl(patternStr, content.urls[patternStr]!);
+    //     }
+    //   }
+    // }
 
     if (!hasNote && replyControl.isNote && replyControl.isNoteV2) {
       final Color color;
@@ -969,7 +953,7 @@ class ReplyItemGrpc extends StatelessWidget {
 
       final hasClickUrl = content.richText.note.hasClickUrl();
       if (hasClickUrl || content.richText.opus.hasOpusId()) {
-        color = theme.colorScheme.primary;
+        color = colorScheme.primary;
         recognizer = NoDeadlineTapGestureRecognizer()
           ..onTap = () => hasClickUrl
               ? PiliScheme.routePushFromUrl(content.richText.note.clickUrl)
@@ -981,7 +965,7 @@ class ReplyItemGrpc extends StatelessWidget {
                   },
                 );
       } else {
-        color = theme.colorScheme.secondary;
+        color = colorScheme.secondary;
       }
       spanChildren.insert(
         0,
@@ -1005,11 +989,12 @@ class ReplyItemGrpc extends StatelessWidget {
     late String message = item.content.message;
     final ownerMid = Int64(Accounts.main.mid);
     final theme = Theme.of(context);
-    final errorColor = theme.colorScheme.error;
+    final colorScheme = theme.colorScheme;
+    final errorColor = colorScheme.error;
     final style = theme.textTheme.titleSmall!;
 
     return Padding(
-      padding: EdgeInsets.only(
+      padding: .only(
         bottom: MediaQuery.viewPaddingOf(context).bottom + 20,
       ),
       child: Column(
@@ -1025,7 +1010,7 @@ class ReplyItemGrpc extends StatelessWidget {
                   width: 32,
                   height: 3,
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.outline,
+                    color: colorScheme.outline,
                     borderRadius: const BorderRadius.all(Radius.circular(3)),
                   ),
                 ),
@@ -1047,7 +1032,7 @@ class ReplyItemGrpc extends StatelessWidget {
               },
               title: Text(
                 'save to local',
-                style: style.copyWith(color: theme.colorScheme.primary),
+                style: style.copyWith(color: colorScheme.primary),
               ),
             ),
             ListTile(
@@ -1058,7 +1043,7 @@ class ReplyItemGrpc extends StatelessWidget {
               },
               title: Text(
                 'remove from local',
-                style: style.copyWith(color: theme.colorScheme.primary),
+                style: style.copyWith(color: colorScheme.primary),
               ),
             ),
             ListTile(
@@ -1077,7 +1062,7 @@ class ReplyItemGrpc extends StatelessWidget {
               },
               title: Text(
                 'save to local (x1000)',
-                style: style.copyWith(color: theme.colorScheme.primary),
+                style: style.copyWith(color: colorScheme.primary),
               ),
             ),
           ],
@@ -1088,7 +1073,7 @@ class ReplyItemGrpc extends StatelessWidget {
                 bool? isDelete = await showDialog<bool>(
                   context: context,
                   builder: (context) {
-                    final theme = Theme.of(context);
+                    final colorScheme = ColorScheme.of(context);
                     return AlertDialog(
                       title: const Text('删除评论'),
                       content: Text.rich(
@@ -1099,7 +1084,7 @@ class ReplyItemGrpc extends StatelessWidget {
                               TextSpan(
                                 text: '@${item.member.name}',
                                 style: TextStyle(
-                                  color: theme.colorScheme.primary,
+                                  color: colorScheme.primary,
                                 ),
                               ),
                               const TextSpan(text: ':\n'),
@@ -1114,7 +1099,7 @@ class ReplyItemGrpc extends StatelessWidget {
                           child: Text(
                             '取消',
                             style: TextStyle(
-                              color: theme.colorScheme.outline,
+                              color: colorScheme.outline,
                             ),
                           ),
                         ),
@@ -1258,6 +1243,8 @@ class ReplyItemGrpc extends StatelessWidget {
                     child: SelectableText(
                       message,
                       style: const TextStyle(fontSize: 15, height: 1.7),
+                      contextMenuBuilder: (_, editableTextState) =>
+                          _filterMenuBuilder(context, editableTextState),
                     ),
                   ),
                 ),
@@ -1266,15 +1253,6 @@ class ReplyItemGrpc extends StatelessWidget {
             minLeadingWidth: 0,
             leading: const Icon(Icons.copy_outlined, size: 19),
             title: Text('自由复制', style: style),
-          ),
-          ListTile(
-            onTap: () {
-              Get.back();
-              showReplyBanWordDialog(context, item, onDelete);
-            },
-            minLeadingWidth: 0,
-            leading: const Icon(Icons.gesture_outlined, size: 19),
-            title: Text('取词加入过滤', style: style),
           ),
           ListTile(
             onTap: () {
@@ -1292,324 +1270,63 @@ class ReplyItemGrpc extends StatelessWidget {
                 onCheckReply?.call(item);
               },
               minLeadingWidth: 0,
-              leading: const Stack(
-                clipBehavior: Clip.none,
-                alignment: Alignment.center,
-                children: [
-                  Icon(Icons.shield_outlined, size: 19),
-                  Icon(Icons.reply, size: 12),
-                ],
-              ),
+              leading: const Icon(CustomIcons.shield_reply, size: 19),
               title: Text('检查评论', style: style),
             ),
         ],
       ),
     );
   }
-}
 
-class _ReplyBanWordDialog extends StatefulWidget {
-  const _ReplyBanWordDialog({
-    required this.message,
-    required this.item,
-    required this.onDelete,
-  });
-
-  final String message;
-  final ReplyInfo item;
-  final VoidCallback onDelete;
-
-  @override
-  State<_ReplyBanWordDialog> createState() => _ReplyBanWordDialogState();
-}
-
-class _ReplyBanWordDialogState extends State<_ReplyBanWordDialog> {
-  late final List<String> _chars = widget.message.characters.toList();
-  late final List<int> _charStarts = _buildCharStarts(_chars);
-  final ScrollController _scrollController = ScrollController();
-
-  int? _selectionStart;
-  int? _selectionEnd;
-  bool _isDragging = false;
-  bool _blockUser = false;
-
-  static List<int> _buildCharStarts(List<String> chars) {
-    int offset = 0;
-    return chars.map((char) {
-      final start = offset;
-      offset += char.length;
-      return start;
-    }).toList();
-  }
-
-  String get _selectedText {
-    if (_selectionStart == null || _selectionEnd == null) {
-      return '';
-    }
-    final start = min(_selectionStart!, _selectionEnd!);
-    final end = max(_selectionStart!, _selectionEnd!);
-    return _chars.sublist(start, end + 1).join();
-  }
-
-  bool _isSelected(int index) {
-    if (_selectionStart == null || _selectionEnd == null) {
-      return false;
-    }
-    final start = min(_selectionStart!, _selectionEnd!);
-    final end = max(_selectionStart!, _selectionEnd!);
-    return index >= start && index <= end;
-  }
-
-  int _indexFromTextOffset(int textOffset) {
-    for (int i = _charStarts.length - 1; i >= 0; i--) {
-      if (textOffset >= _charStarts[i]) {
-        return i;
-      }
-    }
-    return 0;
-  }
-
-  int? _hitTestIndex(BoxConstraints constraints, Offset localPosition) {
-    if (_chars.isEmpty) {
-      return null;
-    }
-
-    final theme = Theme.of(context);
-    final textStyle = theme.textTheme.bodyLarge?.copyWith(
-      fontSize: 20,
-      height: 1.9,
-      color: theme.colorScheme.onSurface,
-    );
-    if (textStyle == null) {
-      return null;
-    }
-
-    final painter = TextPainter(
-      textDirection: Directionality.of(context),
-      text: TextSpan(
-        style: textStyle,
-        children: [
-          for (final char in _chars) TextSpan(text: char),
-        ],
-      ),
-    )..layout(maxWidth: constraints.maxWidth);
-
-    final adjustedPosition =
-        localPosition + Offset(0, _scrollController.hasClients ? _scrollController.offset : 0);
-
-    if (adjustedPosition.dx < 0 ||
-        adjustedPosition.dy < 0 ||
-        adjustedPosition.dx > painter.width ||
-        adjustedPosition.dy > painter.height) {
-      return null;
-    }
-
-    final textOffset = painter.getPositionForOffset(adjustedPosition).offset;
-    return _indexFromTextOffset(textOffset);
-  }
-
-  void _updateSelection(int index, {required bool resetStart}) {
-    final nextStart = resetStart ? index : (_selectionStart ?? index);
-    if (_selectionStart == nextStart && _selectionEnd == index) {
-      return;
-    }
-    setState(() {
-      _selectionStart = nextStart;
-      _selectionEnd = index;
-    });
-  }
-
-  Future<void> _submit() async {
-    final keyword = _selectedText.trim();
-    if (keyword.isEmpty && !_blockUser) {
-      SmartDialog.showToast('请选择要屏蔽的内容');
-      return;
-    }
-
-    bool didSomething = false;
-    if (keyword.isNotEmpty) {
-      final added = await ReplyItemGrpc.addReplyBanWord(keyword);
-      didSomething = added;
-    }
-
-    bool blocked = false;
-    if (_blockUser) {
-      final res = await VideoHttp.relationMod(
-        mid: widget.item.mid.toInt(),
-        act: 5,
-        reSrc: 11,
-      );
-      if (res.isSuccess) {
-        SmartDialog.showToast('拉黑成功');
-        blocked = true;
-        didSomething = true;
-      } else {
-        res.toast();
-      }
-    }
-
-    if (!didSomething || !mounted) {
-      return;
-    }
-    Navigator.of(context).pop();
-    if (blocked) {
-      widget.onDelete();
-    }
-  }
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final textStyle = theme.textTheme.bodyLarge?.copyWith(
-      fontSize: 20,
-      height: 1.9,
-      color: theme.colorScheme.onSurface,
-    );
-    final selectedColor = theme.colorScheme.primaryContainer;
-    final selectedTextColor = theme.colorScheme.onPrimaryContainer;
-
-    return AlertDialog(
-      title: const Text('取词加入评论过滤'),
-      contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-      content: SizedBox(
-        width: min(520, MediaQuery.sizeOf(context).width - 48),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '按住并滑动选择要加入过滤的文字',
-              style: TextStyle(
-                fontSize: 13,
-                color: theme.colorScheme.outline,
-              ),
-            ),
-            const SizedBox(height: 8),
-            CheckboxListTile(
-              value: _blockUser,
-              onChanged: (value) {
-                setState(() {
-                  _blockUser = value ?? false;
-                });
-              },
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-              activeColor: theme.colorScheme.error,
-              title: Text(
-                '拉黑此人',
-                style: TextStyle(color: theme.colorScheme.error),
-              ),
-            ),
-            const SizedBox(height: 12),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 280),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.45,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    return Listener(
-                      onPointerDown: (event) {
-                        final index = _hitTestIndex(
-                          constraints,
-                          event.localPosition,
-                        );
-                        if (index == null) {
-                          return;
-                        }
-                        _isDragging = true;
-                        _updateSelection(index, resetStart: true);
-                      },
-                      onPointerMove: (event) {
-                        if (!_isDragging) {
-                          return;
-                        }
-                        final index = _hitTestIndex(
-                          constraints,
-                          event.localPosition,
-                        );
-                        if (index == null) {
-                          return;
-                        }
-                        _updateSelection(index, resetStart: false);
-                      },
-                      onPointerUp: (_) => _isDragging = false,
-                      onPointerCancel: (_) => _isDragging = false,
-                      child: SingleChildScrollView(
-                        controller: _scrollController,
-                        child: RichText(
-                          text: TextSpan(
-                            style: textStyle,
-                            children: [
-                              for (int i = 0; i < _chars.length; i++)
-                                TextSpan(
-                                  text: _chars[i],
-                                  style: _isSelected(i)
-                                      ? TextStyle(
-                                          backgroundColor: selectedColor,
-                                          color: selectedTextColor,
-                                        )
-                                      : null,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _selectedText.isEmpty ? '当前未选择内容' : '当前选择：$_selectedText',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                color: _selectedText.isEmpty
-                    ? theme.colorScheme.outline
-                    : theme.colorScheme.primary,
-              ),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
+  static Widget _filterMenuBuilder(
+    BuildContext context,
+    EditableTextState editableTextState,
+  ) {
+    final items = editableTextState.contextMenuButtonItems;
+    if (!editableTextState.textEditingValue.selection.isCollapsed) {
+      items.add(
+        ContextMenuButtonItem(
           onPressed: () {
-            setState(() {
-              _selectionStart = null;
-              _selectionEnd = null;
-            });
+            Navigator.of(context).pop();
+            final select = editableTextState.textEditingValue;
+            String text = RegExp.escape(
+              select.selection.textInside(select.text),
+            );
+            if (ReplyGrpc.enableFilter) text = '|$text';
+
+            showConfirmDialog(
+              context: context,
+              title: const Text('是否确认评论过滤的变更：'),
+              content: Text.rich(
+                TextSpan(
+                  text: ReplyGrpc.replyRegExp.pattern,
+                  children: [
+                    TextSpan(
+                      text: text,
+                      style: const TextStyle(
+                        color: Colors.green,
+                        fontWeight: .bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              onConfirm: () {
+                final filter = ReplyGrpc.replyRegExp.pattern + text;
+                ReplyGrpc.replyRegExp = RegExp(filter, caseSensitive: false);
+                ReplyGrpc.enableFilter = true;
+                GStorage.setting.put(SettingBoxKey.banWordForReply, filter);
+                SmartDialog.showToast('已保存');
+              },
+            );
           },
-          child: const Text('清空'),
+          label: '加入过滤',
         ),
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(
-            '取消',
-            style: TextStyle(color: theme.colorScheme.outline),
-          ),
-        ),
-        TextButton(
-          onPressed: _submit,
-          child: const Text('确定'),
-        ),
-      ],
+      );
+    }
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      buttonItems: items,
+      anchors: editableTextState.contextMenuAnchors,
     );
   }
 }

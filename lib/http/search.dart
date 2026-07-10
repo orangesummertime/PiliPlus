@@ -11,6 +11,7 @@ import 'package:PiliPlus/models_new/pgc/pgc_info_model/result.dart';
 import 'package:PiliPlus/models_new/search/search_rcmd/data.dart';
 import 'package:PiliPlus/models_new/search/search_trending/data.dart';
 import 'package:PiliPlus/models_new/video/video_detail/dimension.dart';
+import 'package:PiliPlus/utils/extension/iterable_ext.dart';
 import 'package:PiliPlus/utils/request_utils.dart';
 import 'package:PiliPlus/utils/wbi_sign.dart';
 import 'package:dio/dio.dart';
@@ -191,7 +192,7 @@ abstract final class SearchHttp {
     if (res.data['code'] == 0) {
       if (res.data['data'] case List list) {
         final target = part != null
-            ? (list.elementAtOrNull(part - 1) ?? list.firstOrNull)
+            ? (list.getOrNull(part - 1) ?? list.firstOrNull)
             : list.firstOrNull;
         if (target != null) {
           return (
@@ -261,6 +262,7 @@ abstract final class SearchHttp {
 
   static Future<LoadingState<SearchTrendingData>> searchTrending({
     int limit = 30,
+    bool needsTop = false,
   }) async {
     final res = await Request().get(
       Api.searchTrending,
@@ -269,7 +271,9 @@ abstract final class SearchHttp {
       },
     );
     if (res.data['code'] == 0) {
-      return Success(SearchTrendingData.fromJson(res.data['data']));
+      return Success(
+        SearchTrendingData.fromJson(res.data['data'], needsTop: needsTop),
+      );
     } else {
       return Error(res.data['message']);
     }
