@@ -6,13 +6,12 @@ import 'package:PiliPlus/common/widgets/view_sliver_safe_area.dart';
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo;
 import 'package:PiliPlus/pages/video/reply/widgets/reply_item_grpc.dart';
-import 'package:PiliPlus/utils/app_scheme.dart';
 import 'package:PiliPlus/utils/id_utils.dart';
-import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/reply_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/waterfall.dart';
+import 'package:PiliPlus/pages/video/reply_reply/view.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:waterfall_flow/waterfall_flow.dart';
@@ -70,20 +69,13 @@ class _FavReplyPageState extends State<FavReplyPage>
   }
 
   void _replyReply(ReplyInfo replyInfo, int? rpid) {
-    switch (replyInfo.type.toInt()) {
-      case 1:
-        PiliScheme.videoPush(replyInfo.oid.toInt(), null);
-      case 12:
-        PageUtils.toDupNamed(
-          '/articlePage',
-          parameters: {'id': replyInfo.oid.toString(), 'type': 'read'},
-        );
-      default:
-        PageUtils.pushDynFromId(
-          rid: replyInfo.oid.toString(),
-          type: replyInfo.type,
-        );
-    }
+    final rootId = replyInfo.root.toInt();
+    VideoReplyReplyPanel.toReply(
+      oid: replyInfo.oid.toInt(),
+      rootId: rootId == 0 ? replyInfo.id.toInt() : rootId,
+      rpIdStr: rootId == 0 ? null : replyInfo.id.toString(),
+      type: replyInfo.type.toInt(),
+    );
   }
 
   void _onCheckReply(ReplyInfo replyInfo) {
