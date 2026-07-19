@@ -32,10 +32,10 @@ class _FavReplyPageState extends State<FavReplyPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return ValueListenableBuilder<Box<Uint8List>>(
-      valueListenable: GStorage.favReply.listenable(),
-      builder: (context, box, _) {
-        final replies = box.values.map(ReplyInfo.fromBuffer).toList()
+    return StreamBuilder<BoxEvent>(
+      stream: GStorage.favReply.watch(),
+      builder: (context, _) {
+        final replies = GStorage.favReply.values.map(ReplyInfo.fromBuffer).toList()
           ..sort((a, b) => b.ctime.compareTo(a.ctime));
         return refreshIndicator(
           onRefresh: () async {},
