@@ -75,6 +75,7 @@ class _FavReplyPageState extends State<FavReplyPage>
       rootId: rootId == 0 ? replyInfo.id.toInt() : rootId,
       rpIdStr: rootId == 0 ? null : replyInfo.id.toString(),
       type: replyInfo.type.toInt(),
+      uri: Uri.parse('bilibili://video/${replyInfo.oid}'),
     );
   }
 
