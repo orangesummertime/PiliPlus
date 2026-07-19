@@ -4,6 +4,7 @@ import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/models/common/fav_type.dart';
 import 'package:PiliPlus/pages/fav/article/controller.dart';
 import 'package:PiliPlus/pages/fav/cheese/controller.dart';
+import 'package:PiliPlus/pages/fav/reply/controller.dart';
 import 'package:PiliPlus/pages/fav/topic/controller.dart';
 import 'package:PiliPlus/pages/fav/video/controller.dart';
 import 'package:PiliPlus/pages/fav_folder_sort/view.dart';
@@ -137,6 +138,8 @@ class _FavPageState extends State<FavPage> with SingleTickerProviderStateMixin {
                 switch (FavTabType.values[index]) {
                   case FavTabType.video:
                     _favController.scrollController.animToTop();
+                  case FavTabType.reply:
+                    Get.find<FavReplyController>().scrollController.animToTop();
                   case FavTabType.article:
                     Get.find<FavArticleController>().scrollController
                         .animToTop();

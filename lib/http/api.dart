@@ -746,6 +746,9 @@ abstract final class Api {
 
   static const String replyTop = '/x/v2/reply/top';
 
+  /// 我的收藏评论
+  static const String favReply = '/x/v2/reply/folder';
+
   static const String getCoin = '${HttpString.accountBaseUrl}/site/getCoin';
 
   static const String getLiveEmoticons =
