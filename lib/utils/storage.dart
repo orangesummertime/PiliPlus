@@ -23,6 +23,7 @@ abstract final class GStorage {
   static late final Box<dynamic> video;
   static late final Box<int> watchProgress;
   static late final Box<Uint8List>? reply;
+  static late final Box<Uint8List> favReply;
 
   static Future<void> init() async {
     Hive.init(path.join(appSupportDirPath, 'hive'));
@@ -62,6 +63,13 @@ abstract final class GStorage {
           return deletedEntries > 4;
         },
       ).then((res) => watchProgress = res),
+      Hive.openBox<Uint8List>(
+        'favReply',
+        keyComparator: _intStrDescKeyComparator,
+        compactionStrategy: (entries, deletedEntries) {
+          return deletedEntries > 10;
+        },
+      ).then((res) => favReply = res),
     ]);
 
     if (Pref.saveReply) {
@@ -118,6 +126,7 @@ abstract final class GStorage {
       Accounts.account.compact(),
       watchProgress.compact(),
       ?reply?.compact(),
+      favReply.compact(),
     ]);
   }
 
@@ -131,6 +140,7 @@ abstract final class GStorage {
       Accounts.account.close(),
       watchProgress.close(),
       ?reply?.close(),
+      favReply.close(),
     ]);
   }
 
@@ -144,6 +154,7 @@ abstract final class GStorage {
       Accounts.clear(),
       watchProgress.clear(),
       ?reply?.clear(),
+      favReply.clear(),
     ]);
   }
 

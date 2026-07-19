@@ -1,19 +1,20 @@
+import 'dart:typed_data';
+
 import 'package:PiliPlus/common/widgets/flutter/refresh_indicator.dart';
 import 'package:PiliPlus/common/widgets/loading_widget/http_error.dart';
 import 'package:PiliPlus/common/widgets/view_sliver_safe_area.dart';
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo;
-import 'package:PiliPlus/http/loading_state.dart';
-import 'package:PiliPlus/pages/fav/reply/controller.dart';
 import 'package:PiliPlus/pages/video/reply/widgets/reply_item_grpc.dart';
 import 'package:PiliPlus/utils/app_scheme.dart';
 import 'package:PiliPlus/utils/id_utils.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/reply_utils.dart';
+import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/waterfall.dart';
 import 'package:flutter/material.dart';
-import 'package:get/get.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:waterfall_flow/waterfall_flow.dart';
 
 class FavReplyPage extends StatefulWidget {
@@ -25,56 +26,47 @@ class FavReplyPage extends StatefulWidget {
 
 class _FavReplyPageState extends State<FavReplyPage>
     with AutomaticKeepAliveClientMixin, DynMixin {
-  final FavReplyController _controller = Get.put(FavReplyController());
-
   @override
   bool get wantKeepAlive => true;
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return refreshIndicator(
-      onRefresh: _controller.onRefresh,
-      child: CustomScrollView(
-        controller: _controller.scrollController,
-        physics: const AlwaysScrollableScrollPhysics(),
-        slivers: [Obx(() => _buildBody(_controller.loadingState.value))],
-      ),
-    );
-  }
-
-  Widget _buildBody(LoadingState<List<ReplyInfo>?> loadingState) {
-    return switch (loadingState) {
-      Loading() => const SliverFillRemaining(
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      Success(:final response) when response != null && response.isNotEmpty =>
-        ViewSliverSafeArea(
-          sliver: SliverWaterfallFlow(
-            gridDelegate: dynGridDelegate,
-            delegate: SliverChildBuilderDelegate(
-              childCount: response.length,
-              (context, index) {
-                if (index == response.length - 1) _controller.onLoadMore();
-                final reply = response[index];
-                return ReplyItemGrpc(
-                  replyLevel: 0,
-                  needDivider: false,
-                  replyItem: reply,
-                  replyReply: _replyReply,
-                  onCheckReply: _onCheckReply,
-                );
-              },
-            ),
+    return ValueListenableBuilder<Box<Uint8List>>(
+      valueListenable: GStorage.favReply.listenable(),
+      builder: (context, box, _) {
+        final replies = box.values.map(ReplyInfo.fromBuffer).toList()
+          ..sort((a, b) => b.ctime.compareTo(a.ctime));
+        return refreshIndicator(
+          onRefresh: () async {},
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              replies.isNotEmpty
+                  ? ViewSliverSafeArea(
+                      sliver: SliverWaterfallFlow(
+                        gridDelegate: dynGridDelegate,
+                        delegate: SliverChildBuilderDelegate(
+                          childCount: replies.length,
+                          (context, index) {
+                            final reply = replies[index];
+                            return ReplyItemGrpc(
+                              replyLevel: 0,
+                              needDivider: false,
+                              replyItem: reply,
+                              replyReply: _replyReply,
+                              onCheckReply: _onCheckReply,
+                            );
+                          },
+                        ),
+                      ),
+                    )
+                  : const SliverFillRemaining(child: HttpError()),
+            ],
           ),
-        ),
-      Success() => SliverFillRemaining(
-        child: HttpError(onReload: _controller.onReload),
-      ),
-      Error(:final errMsg) => SliverFillRemaining(
-        child: HttpError(errMsg: errMsg, onReload: _controller.onReload),
-      ),
-    };
+        );
+      },
+    );
   }
 
   void _replyReply(ReplyInfo replyInfo, int? rpid) {

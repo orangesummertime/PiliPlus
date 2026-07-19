@@ -1,6 +1,4 @@
 import 'package:PiliPlus/common/constants.dart';
-import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
-    show ReplyInfo;
 import 'package:PiliPlus/http/api.dart';
 import 'package:PiliPlus/http/init.dart';
 import 'package:PiliPlus/http/loading_state.dart';
@@ -17,31 +15,9 @@ import 'package:PiliPlus/models_new/space/space_fav/data.dart';
 import 'package:PiliPlus/models_new/sub/sub_detail/data.dart';
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/app_sign.dart';
-import 'package:PiliPlus/utils/request_utils.dart';
 import 'package:dio/dio.dart';
 
 abstract final class FavHttp {
-  static Future<LoadingState<List<ReplyInfo>>> favReply({
-    required int page,
-    int pageSize = 20,
-  }) async {
-    final res = await Request().get(
-      Api.favReply,
-      queryParameters: {'pn': page, 'ps': pageSize, 'type': 0},
-    );
-    if (res.data['code'] == 0) {
-      final data = res.data['data'] as Map?;
-      final replies = data?['replies'] ?? data?['list'] ?? const [];
-      return Success(
-        (replies as List)
-            .map((item) => RequestUtils.replyCast(Map<String, dynamic>.from(item)))
-            .toList(),
-      );
-    } else {
-      return Error(res.data['message'], code: res.data['code']);
-    }
-  }
-
   static Future<LoadingState<void>> favFavFolder(Object mediaId) async {
     final res = await Request().post(
       Api.favFavFolder,

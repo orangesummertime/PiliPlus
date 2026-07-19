@@ -1066,6 +1066,39 @@ class ReplyItemGrpc extends StatelessWidget {
               ),
             ),
           ],
+          ListTile(
+            onTap: () {
+              Get.back();
+              final key = item.id.toString();
+              if (GStorage.favReply.containsKey(key)) {
+                GStorage.favReply.delete(key);
+                SmartDialog.showToast('已取消收藏评论');
+              } else {
+                GStorage.favReply.put(
+                  key,
+                  (item.deepCopy()
+                        ..unknownFields.clear()
+                        ..replies.clear()
+                        ..clearTrackInfo())
+                      .writeToBuffer(),
+                );
+                SmartDialog.showToast('已收藏评论');
+              }
+            },
+            minLeadingWidth: 0,
+            leading: Icon(
+              GStorage.favReply.containsKey(item.id.toString())
+                  ? Icons.bookmark_remove_outlined
+                  : Icons.bookmark_add_outlined,
+              size: 19,
+            ),
+            title: Text(
+              GStorage.favReply.containsKey(item.id.toString())
+                  ? '取消收藏评论'
+                  : '收藏评论',
+              style: style,
+            ),
+          ),
           if (ownerMid == upMid || ownerMid == item.member.mid)
             ListTile(
               onTap: () async {
