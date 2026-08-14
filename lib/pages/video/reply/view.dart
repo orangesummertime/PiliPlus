@@ -105,6 +105,32 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
                             sortType.title,
                             style: const TextStyle(fontSize: 13),
                           ),
+                          const Spacer(),
+                          TextButton.icon(
+                            style: Style.buttonStyle,
+                            onPressed: _videoReplyController
+                                    .removedReplies.isEmpty
+                                ? null
+                                : _showRemovedReplies,
+                            icon: Icon(
+                              Icons.filter_alt_off_outlined,
+                              size: 16,
+                              color: _videoReplyController
+                                      .removedReplies.isEmpty
+                                  ? colorScheme.outline
+                                  : colorScheme.secondary,
+                            ),
+                            label: Text(
+                              '已过滤 ${_videoReplyController.removedReplies.length}',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: _videoReplyController
+                                        .removedReplies.isEmpty
+                                    ? colorScheme.outline
+                                    : colorScheme.secondary,
+                              ),
+                            ),
+                          ),
                           TextButton.icon(
                             style: Style.buttonStyle,
                             onPressed: _videoReplyController.queryBySort,
@@ -253,6 +279,64 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
   }
 
   // 展示二级回复
+  void _showRemovedReplies() {
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 640),
+      builder: (context) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.75,
+        minChildSize: 0.4,
+        maxChildSize: 0.95,
+        builder: (context, scrollController) => Column(
+          children: [
+            Padding(
+              padding: const .fromLTRB(20, 16, 8, 8),
+              child: Row(
+                children: [
+                  Text(
+                    '被剔除的评论',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: Get.back,
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: Obx(
+                () => ListView.builder(
+                  controller: scrollController,
+                  itemCount: _videoReplyController.removedReplies.length,
+                  itemBuilder: (context, index) {
+                    final reply = _videoReplyController.removedReplies[index];
+                    return ReplyItemGrpc(
+                      replyItem: reply,
+                      replyLevel: widget.replyLevel,
+                      replyReply: replyReply,
+                      onReply: _videoReplyController.onReply,
+                      upMid: _videoReplyController.upMid,
+                      getTag: () => heroTag,
+                      onCheckReply: (item) => _videoReplyController
+                          .onCheckReply(item, isManual: true),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void replyReply(ReplyInfo replyItem, int? id) {
     EasyThrottle.throttle('replyReply', const Duration(milliseconds: 500), () {
       int oid = replyItem.oid.toInt();

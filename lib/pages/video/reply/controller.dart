@@ -19,6 +19,7 @@ class VideoReplyController extends ReplyController<MainListReply>
   int aid;
   final VideoType videoType;
   late final isPugv = videoType == VideoType.pugv;
+  final removedReplies = <ReplyInfo>[].obs;
 
   final String heroTag;
   late final videoCtr = Get.find<VideoDetailController>(tag: heroTag);
@@ -38,5 +39,12 @@ class VideoReplyController extends ReplyController<MainListReply>
     mode: mode,
     cursorNext: cursorNext,
     offset: paginationReply?.nextOffset,
+    removedReplies: removedReplies,
   );
+
+  @override
+  Future<void> onRefresh() {
+    removedReplies.clear();
+    return super.onRefresh();
+  }
 }

@@ -99,6 +99,7 @@ abstract final class PiliScheme {
 
     switch (scheme) {
       case 'bilibili':
+      case 'piliplus':
         switch (host) {
           case 'root':
             Get.key.currentState!.popUntil(

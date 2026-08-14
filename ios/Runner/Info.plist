@@ -124,6 +124,14 @@
 					<string>bilibili</string>
 				</array>
 			</dict>
+			<dict>
+				<key>CFBundleURLName</key>
+				<string>piliplus</string>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>piliplus</string>
+				</array>
+			</dict>
 		</array>
 		<key>UIBackgroundModes</key>
 		<array>

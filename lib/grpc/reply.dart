@@ -53,6 +53,7 @@ abstract final class ReplyGrpc {
     required Mode mode,
     required String? offset,
     required Int64? cursorNext,
+    List<ReplyInfo>? removedReplies,
   }) async {
     final res = await GrpcReq.request(
       GrpcUrl.mainList,
@@ -72,16 +73,27 @@ abstract final class ReplyGrpc {
     if (res case Success(:final response)) {
       // keyword filter
       if (response.hasUpTop() && needRemoveGrpc(response.upTop)) {
+        removedReplies?.add(response.upTop);
         response.clearUpTop();
       }
 
       if (response.replies.isNotEmpty) {
         response.replies.removeWhere((item) {
           final hasMatch = needRemoveGrpc(item);
-          if (!hasMatch && item.replies.isNotEmpty) {
-            item.replies.removeWhere(needRemoveGrpc);
+          if (hasMatch) {
+            removedReplies?.add(item);
+            return true;
           }
-          return hasMatch;
+          if (item.replies.isNotEmpty) {
+            item.replies.removeWhere((subReply) {
+              final subReplyHasMatch = needRemoveGrpc(subReply);
+              if (subReplyHasMatch) {
+                removedReplies?.add(subReply);
+              }
+              return subReplyHasMatch;
+            });
+          }
+          return false;
         });
       }
     }
