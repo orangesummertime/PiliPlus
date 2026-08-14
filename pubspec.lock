@@ -525,9 +525,9 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: dev
-      resolved-ref: "02eb0aede6ca2278bea54eb5cc9ec520bf8165fc"
-      url: "https://github.com/bggRGjQaUbCoE/flutter_file_picker.git"
+      ref: "v12.0.0-beta.7"
+      resolved-ref: "7fbe3adab03d890d306b197e9244ac6f7f165391"
+      url: "https://github.com/miguelpruivo/flutter_file_picker.git"
     source: git
     version: "12.0.0-beta.7"
   file_selector_linux:
