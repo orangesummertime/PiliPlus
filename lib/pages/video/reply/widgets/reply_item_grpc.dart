@@ -184,6 +184,14 @@ class ReplyItemGrpc extends StatelessWidget {
                           ),
                         ),
                       ),
+                      if (replyItem.replyControl.blocked ||
+                          GlobalData().blackMids.contains(replyItem.mid.toInt()))
+                        const PBadge(
+                          text: '已拉黑',
+                          size: PBadgeSize.small,
+                          isStack: false,
+                          fontSize: 9,
+                        ),
                       BiliUtils.levelPicture(
                         member.level.toInt(),
                         isSeniorMember: member.isSeniorMember == 1,
@@ -555,7 +563,10 @@ class ReplyItemGrpc extends StatelessWidget {
         ],
         ?dialogBtn,
         const Spacer(),
-        ZanButtonGrpc(replyItem: replyItem),
+        ZanButtonGrpc(
+          replyItem: replyItem,
+          onBlockedChanged: () => (context as Element).markNeedsBuild(),
+        ),
         const SizedBox(width: 5),
       ],
     );
