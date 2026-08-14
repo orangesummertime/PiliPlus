@@ -20,6 +20,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Configure Git dependencies
+        run: >
+          git config --global
+          url."https://x-access-token:${{ github.token }}@github.com/".insteadOf
+          "https://github.com/"
+
       - name: Setup flutter
         uses: subosito/flutter-action@v2
         with:
