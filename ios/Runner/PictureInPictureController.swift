@@ -104,7 +104,10 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
       .flatMap { $0.windows }
       .first { $0.isKeyWindow }
     keyWindow?.rootViewController?.view.addSubview(hostView)
-    let controller = AVPictureInPictureController(playerLayer: playerLayer)
+    guard let controller = AVPictureInPictureController(playerLayer: playerLayer) else {
+      result(FlutterError(code: "unsupported", message: "Picture in Picture is not available", details: nil))
+      return
+    }
     controller.delegate = self
     self.player = player
     self.playerLayer = playerLayer
