@@ -41,6 +41,7 @@ import 'package:PiliPlus/utils/extension/box_ext.dart';
 import 'package:PiliPlus/utils/extension/num_ext.dart';
 import 'package:PiliPlus/utils/feed_back.dart';
 import 'package:PiliPlus/utils/image_utils.dart';
+import 'package:PiliPlus/utils/ios/ios_pip_helper.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/path_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
@@ -272,8 +273,8 @@ class PlPlayerController with BlockConfigMixin {
     return routeName == '/videoV' || routeName == '/liveRoom';
   }
 
-  void enterPip({bool autoEnter = false}) {
-    if (videoPlayerController != null) {
+  Future<void> enterPip({bool autoEnter = false}) async {
+    if (Platform.isAndroid && videoPlayerController != null) {
       final state = videoPlayerController!.state;
       PageUtils.enterPip(
         autoEnter: autoEnter,
@@ -282,6 +283,23 @@ class PlPlayerController with BlockConfigMixin {
         isLive: isLive,
         isPlaying: playerStatus.isPlaying,
       );
+      return;
+    }
+    if (Platform.isIOS && videoPlayerController != null) {
+      final pip = IosPipHelper.instance;
+      if (!await pip.isAvailable) return;
+      pip.onStopped = (position, shouldResume) async {
+        if (PlPlayerController.instance != this) return;
+        await seekTo(position, isSeek: false);
+        if (shouldResume) await play();
+      };
+      final started = await pip.start(
+        videoUrl: dataSource.videoSource,
+        audioUrl: dataSource.audioSource,
+        position: videoPlayerController!.state.position,
+        isPlaying: playerStatus.isPlaying,
+      );
+      if (started) await pause(isInterrupt: true);
     }
   }
 

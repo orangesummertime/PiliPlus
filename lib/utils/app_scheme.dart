@@ -39,6 +39,13 @@ abstract final class PiliScheme {
     // registerProtocolHandler('bilibili');
     appLinks = AppLinks();
 
+    // The stream only covers links received after its listener is installed.
+    // Read the initial URI as well so `piliplus://...` works when it launches
+    // the app from a terminated state.
+    appLinks.getInitialLink().then((uri) {
+      if (uri != null) routePush(uri);
+    });
+
     listener?.cancel();
     listener = appLinks.uriLinkStream.listen(routePush);
   }
