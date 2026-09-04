@@ -1,6 +1,7 @@
 import AVFoundation
 import AVKit
 import Flutter
+import UIKit
 
 /// Provides system Picture in Picture for the media_kit based Flutter player.
 /// AVPlayer is used only while the system PiP window is active because iOS only
