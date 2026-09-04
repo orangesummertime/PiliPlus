@@ -15,7 +15,8 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-    let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "PictureInPictureController")
-    pictureInPictureController = PictureInPictureController(messenger: registrar.messenger())
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "PictureInPictureController") {
+      pictureInPictureController = PictureInPictureController(messenger: registrar.messenger())
+    }
   }
 }
