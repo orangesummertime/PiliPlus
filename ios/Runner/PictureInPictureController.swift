@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import Flutter
 
 /// Provides system Picture in Picture for the media_kit based Flutter player.
@@ -152,12 +153,7 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
   }
 
   private func asset(url: URL) -> AVURLAsset {
-    AVURLAsset(url: url, options: [
-      AVURLAssetHTTPHeaderFieldsKey: [
-        "Referer": "https://www.bilibili.com/",
-        "User-Agent": "Mozilla/5.0",
-      ],
-    ])
+    AVURLAsset(url: url)
   }
 }
 
