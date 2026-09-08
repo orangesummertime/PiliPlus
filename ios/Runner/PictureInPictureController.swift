@@ -95,15 +95,21 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
   private func start(item: AVPlayerItem, position: Double, playing: Bool, result: @escaping FlutterResult) {
     let player = AVPlayer(playerItem: item)
     let playerLayer = AVPlayerLayer(player: player)
-    // AVPictureInPictureController needs an attached AVPlayerLayer. Keep the
-    // layer outside the visible viewport; all visible rendering stays Flutter.
-    let hostView = UIView(frame: CGRect(x: -1, y: -1, width: 1, height: 1))
+    // AVPictureInPictureController needs a non-zero AVPlayerLayer attached to
+    // the window. The tiny layer is not used for the app's visible playback.
+    let hostView = UIView(frame: CGRect(x: 0, y: 0, width: 2, height: 2))
+    hostView.isUserInteractionEnabled = false
+    playerLayer.frame = hostView.bounds
     hostView.layer.addSublayer(playerLayer)
     let keyWindow = UIApplication.shared.connectedScenes
       .compactMap { $0 as? UIWindowScene }
       .flatMap { $0.windows }
       .first { $0.isKeyWindow }
-    keyWindow?.rootViewController?.view.addSubview(hostView)
+    guard let rootView = keyWindow?.rootViewController?.view else {
+      result(FlutterError(code: "window", message: "Unable to attach the Picture in Picture player", details: nil))
+      return
+    }
+    rootView.addSubview(hostView)
     guard let controller = AVPictureInPictureController(playerLayer: playerLayer) else {
       result(FlutterError(code: "unsupported", message: "Picture in Picture is not available", details: nil))
       return
@@ -115,16 +121,28 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
     self.controller = controller
     player.seek(to: CMTime(milliseconds: position), toleranceBefore: .zero, toleranceAfter: .zero) { _ in
       if playing { player.play() }
-      // The layer becomes PiP-capable after AVPlayer has begun preparing it.
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-        guard controller.isPictureInPicturePossible else {
-          result(FlutterError(code: "not_ready", message: "Picture in Picture could not be prepared", details: nil))
-          self.stop(notifyFlutter: false)
-          return
-        }
-        self.pendingStartResult = result
-        controller.startPictureInPicture()
-      }
+      self.beginPictureInPicture(controller, result: result)
+    }
+  }
+
+  private func beginPictureInPicture(
+    _ controller: AVPictureInPictureController,
+    result: @escaping FlutterResult,
+    attemptsRemaining: Int = 15
+  ) {
+    guard self.controller === controller else { return }
+    if controller.isPictureInPicturePossible {
+      pendingStartResult = result
+      controller.startPictureInPicture()
+      return
+    }
+    guard attemptsRemaining > 0 else {
+      result(FlutterError(code: "not_ready", message: "Picture in Picture could not be prepared for this video", details: nil))
+      stop(notifyFlutter: false)
+      return
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+      self?.beginPictureInPicture(controller, result: result, attemptsRemaining: attemptsRemaining - 1)
     }
   }
 

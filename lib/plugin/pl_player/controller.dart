@@ -54,7 +54,8 @@ import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:easy_debounce/easy_throttle.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show HapticFeedback, DeviceOrientation;
+import 'package:flutter/services.dart'
+    show DeviceOrientation, HapticFeedback, PlatformException;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:flutter_volume_controller/flutter_volume_controller.dart';
 import 'package:get/get.dart';
@@ -287,19 +288,28 @@ class PlPlayerController with BlockConfigMixin {
     }
     if (Platform.isIOS && videoPlayerController != null) {
       final pip = IosPipHelper.instance;
-      if (!await pip.isAvailable) return;
-      pip.onStopped = (position, shouldResume) async {
-        if (PlPlayerController.instance != this) return;
-        await seekTo(position, isSeek: false);
-        if (shouldResume) await play();
-      };
-      final started = await pip.start(
-        videoUrl: dataSource.videoSource,
-        audioUrl: dataSource.audioSource,
-        position: videoPlayerController!.state.position,
-        isPlaying: playerStatus.isPlaying,
-      );
-      if (started) await pause(isInterrupt: true);
+      try {
+        if (!await pip.isAvailable) {
+          SmartDialog.showToast('当前设备或视频不支持画中画');
+          return;
+        }
+        pip.onStopped = (position, shouldResume) async {
+          if (PlPlayerController.instance != this) return;
+          await seekTo(position, isSeek: false);
+          if (shouldResume) await play();
+        };
+        await pip.start(
+          videoUrl: dataSource.videoSource,
+          audioUrl: dataSource.audioSource,
+          position: videoPlayerController!.state.position,
+          isPlaying: playerStatus.isPlaying,
+        );
+        await pause(isInterrupt: true);
+      } on PlatformException catch (error) {
+        SmartDialog.showToast(error.message ?? '画中画启动失败');
+      } catch (_) {
+        SmartDialog.showToast('画中画启动失败');
+      }
     }
   }
 

@@ -18,24 +18,19 @@ class IosPipHelper {
     return await _channel.invokeMethod<bool>('isAvailable') ?? false;
   }
 
-  Future<bool> start({
+  Future<void> start({
     required String videoUrl,
     String? audioUrl,
     required Duration position,
     required bool isPlaying,
   }) async {
-    if (!Platform.isIOS) return false;
-    try {
-      await _channel.invokeMethod<void>('start', {
-        'videoUrl': videoUrl,
-        'audioUrl': audioUrl,
-        'positionMs': position.inMilliseconds,
-        'isPlaying': isPlaying,
-      });
-      return true;
-    } on PlatformException {
-      return false;
-    }
+    if (!Platform.isIOS) return;
+    await _channel.invokeMethod<void>('start', {
+      'videoUrl': videoUrl,
+      'audioUrl': audioUrl,
+      'positionMs': position.inMilliseconds,
+      'isPlaying': isPlaying,
+    });
   }
 
   Future<void> _handleMethodCall(MethodCall call) async {
