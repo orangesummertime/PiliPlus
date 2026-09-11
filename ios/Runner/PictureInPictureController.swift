@@ -175,7 +175,15 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
   }
 
   private func asset(url: URL) -> AVURLAsset {
-    AVURLAsset(url: url)
+    AVURLAsset(url: url, options: [
+      // Bilibili's media CDN rejects DASH segment requests unless both of
+      // these headers are present. Use the raw key because Apple exposes a
+      // public user-agent option, but no public option for arbitrary headers.
+      "AVURLAssetHTTPHeaderFieldsKey": [
+        "Referer": "https://www.bilibili.com/",
+        "User-Agent": "Mozilla/5.0",
+      ],
+    ])
   }
 }
 
