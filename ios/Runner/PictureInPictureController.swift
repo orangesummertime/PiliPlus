@@ -15,6 +15,7 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
   private var hostView: UIView?
   private var controller: AVPictureInPictureController?
   private var pendingStartResult: FlutterResult?
+  private var requestGeneration = 0
   private var restorePosition = CMTime.zero
   private var shouldResume = false
 
@@ -52,6 +53,8 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
 
   private func start(videoUrl: URL, audioUrl: URL?, position: Double, playing: Bool, result: @escaping FlutterResult) {
     stop(notifyFlutter: false)
+    let requestID = requestGeneration
+    pendingStartResult = result
     restorePosition = CMTime(milliseconds: position)
     shouldResume = playing
 
@@ -70,10 +73,11 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
       audioAsset.loadValuesAsynchronously(forKeys: ["tracks"]) { group.leave() }
       group.notify(queue: .main) { [weak self] in
         guard let self else { return }
+        guard self.requestGeneration == requestID else { return }
         do {
           guard let videoTrack = videoAsset.tracks(withMediaType: .video).first,
                 let compositionVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            result(FlutterError(code: "video_track", message: "Unable to load the video track", details: nil))
+            self.finish(requestID: requestID, with: FlutterError(code: "video_track", message: "Unable to load the video track", details: nil), cleanup: true)
             return
           }
           try compositionVideo.insertTimeRange(CMTimeRange(start: .zero, duration: videoAsset.duration), of: videoTrack, at: .zero)
@@ -81,19 +85,21 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
              let compositionAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
             try compositionAudio.insertTimeRange(CMTimeRange(start: .zero, duration: audioAsset.duration), of: audioTrack, at: .zero)
           }
-          self.start(item: AVPlayerItem(asset: composition), position: position, playing: playing, result: result)
+          self.start(item: AVPlayerItem(asset: composition), videoUrl: videoUrl, position: position, playing: playing, requestID: requestID)
         } catch {
-          result(FlutterError(code: "composition", message: error.localizedDescription, details: nil))
+          self.finish(requestID: requestID, with: FlutterError(code: "composition", message: error.localizedDescription, details: nil), cleanup: true)
         }
       }
     } else {
       item = AVPlayerItem(asset: asset(url: videoUrl))
-      start(item: item, position: position, playing: playing, result: result)
+      start(item: item, videoUrl: videoUrl, position: position, playing: playing, requestID: requestID)
     }
   }
 
-  private func start(item: AVPlayerItem, position: Double, playing: Bool, result: @escaping FlutterResult) {
+  private func start(item: AVPlayerItem, videoUrl: URL, position: Double, playing: Bool, requestID: Int) {
+    guard requestGeneration == requestID else { return }
     let player = AVPlayer(playerItem: item)
+    player.isMuted = true
     let playerLayer = AVPlayerLayer(player: player)
     // AVPictureInPictureController needs a non-zero AVPlayerLayer attached to
     // the window. The tiny layer is not used for the app's visible playback.
@@ -106,12 +112,13 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
       .flatMap { $0.windows }
       .first { $0.isKeyWindow }
     guard let rootView = keyWindow?.rootViewController?.view else {
-      result(FlutterError(code: "window", message: "Unable to attach the Picture in Picture player", details: nil))
+      finish(requestID: requestID, with: FlutterError(code: "window", message: "Unable to attach the Picture in Picture player", details: nil), cleanup: true)
       return
     }
     rootView.addSubview(hostView)
     guard let controller = AVPictureInPictureController(playerLayer: playerLayer) else {
-      result(FlutterError(code: "unsupported", message: "Picture in Picture is not available", details: nil))
+      hostView.removeFromSuperview()
+      finish(requestID: requestID, with: FlutterError(code: "unsupported", message: "Picture in Picture is not available", details: nil), cleanup: true)
       return
     }
     controller.delegate = self
@@ -119,34 +126,47 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
     self.playerLayer = playerLayer
     self.hostView = hostView
     self.controller = controller
-    player.seek(to: CMTime(milliseconds: position), toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+    let seekTolerance = CMTime(value: 500, timescale: 1000)
+    player.seek(to: CMTime(milliseconds: position), toleranceBefore: seekTolerance, toleranceAfter: seekTolerance) { _ in
+      guard self.requestGeneration == requestID, self.controller === controller else { return }
       if playing { player.play() }
-      self.beginPictureInPicture(controller, result: result)
+      self.beginPictureInPicture(controller, videoUrl: videoUrl, requestID: requestID)
     }
   }
 
   private func beginPictureInPicture(
     _ controller: AVPictureInPictureController,
-    result: @escaping FlutterResult,
+    videoUrl: URL,
+    requestID: Int,
     attemptsRemaining: Int = 15
   ) {
-    guard self.controller === controller else { return }
+    guard requestGeneration == requestID, self.controller === controller else { return }
     if controller.isPictureInPicturePossible {
-      pendingStartResult = result
-      controller.startPictureInPicture()
+      channel.invokeMethod("willStart", arguments: ["videoUrl": videoUrl.absoluteString]) { [weak self] response in
+        guard let self,
+              self.requestGeneration == requestID,
+              self.controller === controller else { return }
+        let allowed = (response as? NSNumber)?.boolValue ?? (response as? Bool ?? false)
+        guard allowed else {
+          self.finish(requestID: requestID, with: FlutterError(code: "cancelled", message: "Picture in Picture request was cancelled", details: nil), cleanup: true)
+          return
+        }
+        self.player?.isMuted = false
+        controller.startPictureInPicture()
+      }
       return
     }
     guard attemptsRemaining > 0 else {
-      result(FlutterError(code: "not_ready", message: "Picture in Picture could not be prepared for this video", details: nil))
-      stop(notifyFlutter: false)
+      finish(requestID: requestID, with: FlutterError(code: "not_ready", message: "Picture in Picture could not be prepared for this video", details: nil), cleanup: true)
       return
     }
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-      self?.beginPictureInPicture(controller, result: result, attemptsRemaining: attemptsRemaining - 1)
+      self?.beginPictureInPicture(controller, videoUrl: videoUrl, requestID: requestID, attemptsRemaining: attemptsRemaining - 1)
     }
   }
 
   func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+    guard controller === pictureInPictureController else { return }
     let position = player?.currentTime().milliseconds ?? restorePosition.milliseconds
     let resume = shouldResume
     stop(notifyFlutter: false)
@@ -154,17 +174,32 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
   }
 
   func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-    pendingStartResult?(nil)
-    pendingStartResult = nil
+    guard controller === pictureInPictureController else { return }
+    finish(requestID: requestGeneration, with: nil)
   }
 
   func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
-    pendingStartResult?(FlutterError(code: "start_failed", message: error.localizedDescription, details: nil))
-    pendingStartResult = nil
-    stop(notifyFlutter: false)
+    guard controller === pictureInPictureController else { return }
+    finish(requestID: requestGeneration, with: FlutterError(code: "start_failed", message: error.localizedDescription, details: nil), cleanup: true)
   }
 
   private func stop(notifyFlutter: Bool = true) {
+    requestGeneration &+= 1
+    if let pendingStartResult {
+      self.pendingStartResult = nil
+      pendingStartResult(FlutterError(code: "cancelled", message: "Picture in Picture request was cancelled", details: nil))
+    }
+    cleanupPlayer()
+  }
+
+  private func finish(requestID: Int, with value: Any?, cleanup: Bool = false) {
+    guard requestGeneration == requestID, let pendingStartResult else { return }
+    self.pendingStartResult = nil
+    pendingStartResult(value)
+    if cleanup { cleanupPlayer() }
+  }
+
+  private func cleanupPlayer() {
     if controller?.isPictureInPictureActive == true { controller?.stopPictureInPicture() }
     player?.pause()
     controller = nil

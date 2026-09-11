@@ -288,26 +288,59 @@ class PlPlayerController with BlockConfigMixin {
     }
     if (Platform.isIOS && videoPlayerController != null) {
       final pip = IosPipHelper.instance;
+      final videoSource = dataSource.videoSource;
+      final audioSource = dataSource.audioSource;
+      final wasPlaying = playerStatus.isPlaying;
+      var pausedForPip = false;
       try {
         if (!await pip.isAvailable) {
           SmartDialog.showToast('当前设备或视频不支持画中画');
           return;
         }
+        SmartDialog.showToast(
+          '正在准备画中画…',
+          displayTime: const Duration(milliseconds: 1200),
+        );
+        pip.onWillStart = (requestedVideoUrl) async {
+          if (PlPlayerController.instance != this ||
+              dataSource.videoSource != videoSource ||
+              requestedVideoUrl != videoSource) {
+            return false;
+          }
+          if (wasPlaying && !playerStatus.isPlaying) return false;
+          if (wasPlaying) {
+            await pause(isInterrupt: true);
+            pausedForPip = true;
+          }
+          return PlPlayerController.instance == this &&
+              dataSource.videoSource == videoSource;
+        };
         pip.onStopped = (position, shouldResume) async {
           if (PlPlayerController.instance != this) return;
           await seekTo(position, isSeek: false);
           if (shouldResume) await play();
         };
         await pip.start(
-          videoUrl: dataSource.videoSource,
-          audioUrl: dataSource.audioSource,
+          videoUrl: videoSource,
+          audioUrl: audioSource,
           position: videoPlayerController!.state.position,
-          isPlaying: playerStatus.isPlaying,
+          isPlaying: wasPlaying,
         );
-        await pause(isInterrupt: true);
       } on PlatformException catch (error) {
-        SmartDialog.showToast(error.message ?? '画中画启动失败');
+        if (pausedForPip &&
+            PlPlayerController.instance == this &&
+            dataSource.videoSource == videoSource) {
+          await play();
+        }
+        if (error.code != 'cancelled') {
+          SmartDialog.showToast(error.message ?? '画中画启动失败');
+        }
       } catch (_) {
+        if (pausedForPip &&
+            PlPlayerController.instance == this &&
+            dataSource.videoSource == videoSource) {
+          await play();
+        }
         SmartDialog.showToast('画中画启动失败');
       }
     }
