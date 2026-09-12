@@ -46,6 +46,10 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
     case "stop":
       stop()
       result(nil)
+    case "setMuted":
+      let muted = (call.arguments as? NSNumber)?.boolValue ?? true
+      player?.isMuted = muted
+      result(nil)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -85,18 +89,18 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
              let compositionAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
             try compositionAudio.insertTimeRange(CMTimeRange(start: .zero, duration: audioAsset.duration), of: audioTrack, at: .zero)
           }
-          self.start(item: AVPlayerItem(asset: composition), videoUrl: videoUrl, position: position, playing: playing, requestID: requestID)
+          self.start(item: AVPlayerItem(asset: composition), position: position, playing: playing, requestID: requestID)
         } catch {
           self.finish(requestID: requestID, with: FlutterError(code: "composition", message: error.localizedDescription, details: nil), cleanup: true)
         }
       }
     } else {
       item = AVPlayerItem(asset: asset(url: videoUrl))
-      start(item: item, videoUrl: videoUrl, position: position, playing: playing, requestID: requestID)
+      start(item: item, position: position, playing: playing, requestID: requestID)
     }
   }
 
-  private func start(item: AVPlayerItem, videoUrl: URL, position: Double, playing: Bool, requestID: Int) {
+  private func start(item: AVPlayerItem, position: Double, playing: Bool, requestID: Int) {
     guard requestGeneration == requestID else { return }
     let player = AVPlayer(playerItem: item)
     player.isMuted = true
@@ -130,30 +134,18 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
     player.seek(to: CMTime(milliseconds: position), toleranceBefore: seekTolerance, toleranceAfter: seekTolerance) { _ in
       guard self.requestGeneration == requestID, self.controller === controller else { return }
       if playing { player.play() }
-      self.beginPictureInPicture(controller, videoUrl: videoUrl, requestID: requestID)
+      self.beginPictureInPicture(controller, requestID: requestID)
     }
   }
 
   private func beginPictureInPicture(
     _ controller: AVPictureInPictureController,
-    videoUrl: URL,
     requestID: Int,
     attemptsRemaining: Int = 15
   ) {
     guard requestGeneration == requestID, self.controller === controller else { return }
     if controller.isPictureInPicturePossible {
-      channel.invokeMethod("willStart", arguments: ["videoUrl": videoUrl.absoluteString]) { [weak self] response in
-        guard let self,
-              self.requestGeneration == requestID,
-              self.controller === controller else { return }
-        let allowed = (response as? NSNumber)?.boolValue ?? (response as? Bool ?? false)
-        guard allowed else {
-          self.finish(requestID: requestID, with: FlutterError(code: "cancelled", message: "Picture in Picture request was cancelled", details: nil), cleanup: true)
-          return
-        }
-        self.player?.isMuted = false
-        controller.startPictureInPicture()
-      }
+      controller.startPictureInPicture()
       return
     }
     guard attemptsRemaining > 0 else {
@@ -161,7 +153,7 @@ final class PictureInPictureController: NSObject, AVPictureInPictureControllerDe
       return
     }
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-      self?.beginPictureInPicture(controller, videoUrl: videoUrl, requestID: requestID, attemptsRemaining: attemptsRemaining - 1)
+      self?.beginPictureInPicture(controller, requestID: requestID, attemptsRemaining: attemptsRemaining - 1)
     }
   }
 

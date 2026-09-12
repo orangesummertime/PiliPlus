@@ -11,7 +11,6 @@ class IosPipHelper {
   static final instance = IosPipHelper._();
   static const _channel = MethodChannel('com.piliplus/picture_in_picture');
 
-  Future<bool> Function(String videoUrl)? onWillStart;
   Future<void> Function(Duration position, bool shouldResume)? onStopped;
 
   Future<bool> get isAvailable async {
@@ -34,16 +33,22 @@ class IosPipHelper {
     });
   }
 
-  Future<dynamic> _handleMethodCall(MethodCall call) async {
+  Future<void> stop() async {
+    if (!Platform.isIOS) return;
+    await _channel.invokeMethod<void>('stop');
+  }
+
+  Future<void> setMuted(bool muted) async {
+    if (!Platform.isIOS) return;
+    await _channel.invokeMethod<void>('setMuted', muted);
+  }
+
+  Future<void> _handleMethodCall(MethodCall call) async {
+    if (call.method != 'didStop') return;
     final args = Map<String, dynamic>.from(call.arguments as Map);
-    switch (call.method) {
-      case 'willStart':
-        return await onWillStart?.call(args['videoUrl'] as String) ?? false;
-      case 'didStop':
-        await onStopped?.call(
-          Duration(milliseconds: (args['positionMs'] as num).round()),
-          args['shouldResume'] as bool? ?? false,
-        );
-    }
+    await onStopped?.call(
+      Duration(milliseconds: (args['positionMs'] as num).round()),
+      args['shouldResume'] as bool? ?? false,
+    );
   }
 }

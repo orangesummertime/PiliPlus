@@ -1,4 +1,4 @@
-import 'dart:async' show StreamSubscription, Timer;
+import 'dart:async' show StreamSubscription, Timer, unawaited;
 import 'dart:convert' show ascii;
 import 'dart:io' show Platform;
 import 'dart:math' show max, min;
@@ -292,6 +292,8 @@ class PlPlayerController with BlockConfigMixin {
       final audioSource = dataSource.audioSource;
       final wasPlaying = playerStatus.isPlaying;
       var pausedForPip = false;
+      var staleRequest = false;
+      Timer? staleRequestTimer;
       try {
         if (!await pip.isAvailable) {
           SmartDialog.showToast('当前设备或视频不支持画中画');
@@ -301,20 +303,17 @@ class PlPlayerController with BlockConfigMixin {
           '正在准备画中画…',
           displayTime: const Duration(milliseconds: 1200),
         );
-        pip.onWillStart = (requestedVideoUrl) async {
-          if (PlPlayerController.instance != this ||
-              dataSource.videoSource != videoSource ||
-              requestedVideoUrl != videoSource) {
-            return false;
-          }
-          if (wasPlaying && !playerStatus.isPlaying) return false;
-          if (wasPlaying) {
-            await pause(isInterrupt: true);
-            pausedForPip = true;
-          }
-          return PlPlayerController.instance == this &&
-              dataSource.videoSource == videoSource;
-        };
+        staleRequestTimer = Timer.periodic(
+          const Duration(milliseconds: 100),
+          (timer) {
+            if (PlPlayerController.instance != this ||
+                dataSource.videoSource != videoSource) {
+              staleRequest = true;
+              timer.cancel();
+              unawaited(pip.stop().catchError((_) {}));
+            }
+          },
+        );
         pip.onStopped = (position, shouldResume) async {
           if (PlPlayerController.instance != this) return;
           await seekTo(position, isSeek: false);
@@ -326,6 +325,23 @@ class PlPlayerController with BlockConfigMixin {
           position: videoPlayerController!.state.position,
           isPlaying: wasPlaying,
         );
+        staleRequestTimer.cancel();
+        if (staleRequest ||
+            PlPlayerController.instance != this ||
+            dataSource.videoSource != videoSource) {
+          await pip.stop();
+          return;
+        }
+        if (wasPlaying) {
+          await pause(isInterrupt: true);
+          pausedForPip = true;
+        }
+        if (PlPlayerController.instance != this ||
+            dataSource.videoSource != videoSource) {
+          await pip.stop();
+          return;
+        }
+        await pip.setMuted(false);
       } on PlatformException catch (error) {
         if (pausedForPip &&
             PlPlayerController.instance == this &&
@@ -342,6 +358,8 @@ class PlPlayerController with BlockConfigMixin {
           await play();
         }
         SmartDialog.showToast('画中画启动失败');
+      } finally {
+        staleRequestTimer?.cancel();
       }
     }
   }
