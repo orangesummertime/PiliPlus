@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:PiliPlus/common/widgets/button/icon_button.dart';
-import 'package:PiliPlus/common/widgets/scroll_physics.dart';
+import 'package:PiliPlus/common/widgets/scroll_physics.dart' show ReloadMixin;
 import 'package:PiliPlus/http/api.dart';
 import 'package:PiliPlus/http/constants.dart';
 import 'package:PiliPlus/http/init.dart';
@@ -29,6 +29,7 @@ import 'package:PiliPlus/pages/video/reply/controller.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_repeat.dart';
 import 'package:PiliPlus/services/service_locator.dart';
 import 'package:PiliPlus/utils/accounts.dart';
+import 'package:PiliPlus/utils/android/android_helper.dart';
 import 'package:PiliPlus/utils/device_utils.dart';
 import 'package:PiliPlus/utils/extension/size_ext.dart';
 import 'package:PiliPlus/utils/extension/string_ext.dart';
@@ -41,15 +42,13 @@ import 'package:PiliPlus/utils/request_utils.dart';
 import 'package:PiliPlus/utils/share_utils.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/utils.dart';
-import 'package:expandable/expandable.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
-import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
+import 'package:material_ui/material_ui.dart';
 
 class UgcIntroController extends CommonIntroController with ReloadMixin {
-  late ExpandableController expandableCtr;
-
+  late final RxBool expand;
   final RxBool status = true.obs;
 
   // up主粉丝数
@@ -72,18 +71,15 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
   @override
   void onInit() {
     super.onInit();
-    bool alwaysExpandIntroPanel = Pref.alwaysExpandIntroPanel;
-    expandableCtr = ExpandableController(
-      initialExpanded: alwaysExpandIntroPanel,
-    );
+    final alwaysExpandIntroPanel = Pref.alwaysExpandIntroPanel;
+    expand = RxBool(alwaysExpandIntroPanel);
     if (!alwaysExpandIntroPanel && Pref.expandIntroPanelH) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!expandableCtr.expanded && !DeviceUtils.size.isPortrait) {
-          expandableCtr.toggle();
+        if (!expand.value && !DeviceUtils.size.isPortrait) {
+          expand.toggle();
         }
       });
     }
-
     videoDetail.value.title = Get.arguments['title'] ?? '';
   }
 
@@ -106,15 +102,16 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
         cid.value,
         heroTag,
       );
-      if (videoDetail.value.ugcSeason?.id == response.ugcSeason?.id) {
+      final currentDetail = videoDetail.value;
+      if (currentDetail.ugcSeason?.id == response.ugcSeason?.id) {
         // keep reversed season
-        response.ugcSeason = videoDetail.value.ugcSeason;
+        response.ugcSeason = currentDetail.ugcSeason;
       }
-      if (videoDetail.value.cid == response.cid) {
+      if (currentDetail.cid == response.cid) {
         // keep reversed pages
         response
-          ..pages = videoDetail.value.pages
-          ..isPageReversed = videoDetail.value.isPageReversed;
+          ..pages = currentDetail.pages
+          ..isPageReversed = currentDetail.isPageReversed;
       }
       videoDetail.value = response;
       try {
@@ -125,12 +122,13 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
         }
         if (videoDetailCtr.showReply) {
           try {
-            Get.find<VideoReplyController>(tag: heroTag).count.value =
-                response.stat?.reply ?? 0;
+            Get.find<VideoReplyController>(tag: heroTag)
+              ..count.value = response.stat?.reply ?? 0
+              ..intro = response.desc?.trim();
           } catch (_) {}
         }
       } catch (_) {}
-      final pages = videoDetail.value.pages;
+      final pages = response.pages;
       if (pages != null && pages.isNotEmpty && cid.value == 0) {
         cid.value = pages.first.cid!;
       }
@@ -288,8 +286,12 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
   @override
   void actionShareVideo(BuildContext context) {
     final videoDetail = this.videoDetail.value;
-    final playedTimePos = videoDetailCtr.playedTimePos;
-    String videoUrl = '${HttpString.baseUrl}/video/$bvid';
+    final cid = this.cid.value;
+    final partIndex = videoDetail.pages?.indexWhere((e) => e.cid == cid);
+    final addIndex = partIndex != null && partIndex > 0;
+    final playedTimePos = videoDetailCtr.playedTimePos(addIndex);
+    final videoUrl =
+        '${HttpString.baseUrl}/video/$bvid/${addIndex ? '?p=${partIndex + 1}' : ''}';
     showDialog(
       context: context,
       builder: (_) => SimpleDialog(
@@ -325,7 +327,7 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
             ),
             onTap: () {
               Get.back();
-              PageUtils.launchURL(videoUrl);
+              PiliAndroidHelper.openUrl(videoUrl);
             },
           ),
           if (PlatformUtils.isMobile)
@@ -363,6 +365,11 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
                     pic: videoDetail.pic,
                     title: videoDetail.title,
                     uname: videoDetail.owner?.name,
+                    replyInfo: (
+                      oid: videoDetailCtr.aid,
+                      replyType: videoDetailCtr.videoType.replyType,
+                    ),
+                    mentionItem: videoDetail.owner?.mentionItem,
                   ),
                 );
               },
@@ -449,7 +456,7 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
           followStatus
             ..value.attribute = attribute
             ..refresh();
-          Future.delayed(const Duration(milliseconds: 500), queryFollowStatus);
+          Timer(const Duration(milliseconds: 500), queryFollowStatus);
         },
       );
     }
@@ -490,6 +497,7 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
             cid: cid,
             cover: cover,
             dimension: dimension,
+            title: episode.title,
           );
           return false;
         }
@@ -558,12 +566,6 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
     }
   }
 
-  @override
-  void onClose() {
-    expandableCtr.dispose();
-    super.onClose();
-  }
-
   /// 播放上一个
   @override
   bool prevPlay([bool skipPart = false]) {
@@ -571,8 +573,7 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
     bool isPart = false;
 
     final videoDetail = this.videoDetail.value;
-
-    if (!skipPart && (videoDetail.pages?.length ?? 0) > 1) {
+    if (!skipPart && videoDetail.hasParts) {
       isPart = true;
       episodes.addAll(videoDetail.pages!);
     } else if (videoDetailCtr.isPlayAll) {
@@ -638,7 +639,7 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
       final videoDetail = this.videoDetail.value;
 
       // part -> playall -> season
-      if (!skipPart && (videoDetail.pages?.length ?? 0) > 1) {
+      if (!skipPart && videoDetail.hasParts) {
         isPart = true;
         final List<Part> pages = videoDetail.pages!;
         episodes.addAll(pages);
