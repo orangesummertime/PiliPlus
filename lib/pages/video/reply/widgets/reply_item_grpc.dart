@@ -1271,6 +1271,7 @@ class ReplyItemGrpc extends StatelessWidget {
                               reSrc: 11,
                             );
                             if (res.isSuccess) {
+                              Pref.setBlackMid(item.mid.toInt());
                               SmartDialog.showToast('拉黑成功');
                               onDelete();
                             } else {

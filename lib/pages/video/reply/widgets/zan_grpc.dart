@@ -5,6 +5,7 @@ import 'package:PiliPlus/http/video.dart';
 import 'package:PiliPlus/utils/feed_back.dart';
 import 'package:PiliPlus/utils/global_data.dart';
 import 'package:PiliPlus/utils/num_utils.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:fixnum/fixnum.dart' as $fixnum;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -103,35 +104,44 @@ class ZanButtonGrpc extends StatelessWidget {
     onDone();
   }
 
-  Future<void> onToggleBlock(
-    BuildContext context,
-    bool isProcessing,
-    VoidCallback onDone,
-  ) async {
-    if (isProcessing) {
+  /// mids with a block/unblock request in flight, to ignore repeated taps
+  static final Set<int> _pendingBlockMids = {};
+
+  Future<void> onToggleBlock(BuildContext context) async {
+    final mid = replyItem.mid.toInt();
+    if (!_pendingBlockMids.add(mid)) {
       return;
     }
-    isProcessing = true;
-    feedBack();
-    final isBlocked =
-        replyItem.replyControl.blocked ||
-        GlobalData().blackMids.contains(replyItem.mid.toInt());
-    final res = await VideoHttp.relationMod(
-      mid: replyItem.mid.toInt(),
-      act: isBlocked ? 6 : 5,
-      reSrc: 11,
-    );
-    if (res.isSuccess) {
-      replyItem.replyControl.blocked = !isBlocked;
-      SmartDialog.showToast(isBlocked ? '已取消拉黑' : '已拉黑');
-      onBlockedChanged?.call();
-      if (context.mounted) {
-        (context as Element?)?.markNeedsBuild();
+    try {
+      feedBack();
+      final isBlocked =
+          replyItem.replyControl.blocked ||
+          GlobalData().blackMids.contains(mid);
+      final res = await VideoHttp.relationMod(
+        mid: mid,
+        act: isBlocked ? 6 : 5,
+        reSrc: 11,
+      );
+      if (res.isSuccess) {
+        replyItem.replyControl.blocked = !isBlocked;
+        // keep the local blacklist in sync, otherwise the badge stays after
+        // unblocking (it is also read from GlobalData().blackMids)
+        if (isBlocked) {
+          Pref.removeBlackMid(mid);
+        } else {
+          Pref.setBlackMid(mid);
+        }
+        SmartDialog.showToast(isBlocked ? '已取消拉黑' : '已拉黑');
+        onBlockedChanged?.call();
+        if (context.mounted) {
+          (context as Element).markNeedsBuild();
+        }
+      } else {
+        res.toast();
       }
-    } else {
-      res.toast();
+    } finally {
+      _pendingBlockMids.remove(mid);
     }
-    onDone();
   }
 
   @override
@@ -146,7 +156,6 @@ class ZanButtonGrpc extends StatelessWidget {
         GlobalData().blackMids.contains(replyItem.mid.toInt());
     final outline = theme.colorScheme.outline;
     final primary = theme.colorScheme.primary;
-    late bool isBlocking = false;
     final ButtonStyle style = TextButton.styleFrom(
       padding: EdgeInsets.zero,
       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -190,11 +199,7 @@ class ZanButtonGrpc extends StatelessWidget {
               padding: WidgetStatePropertyAll(.zero),
               minimumSize: WidgetStatePropertyAll(.square(40)),
             ),
-            onPressed: () => onToggleBlock(
-              context,
-              isBlocking,
-              () => isBlocking = false,
-            ),
+            onPressed: () => onToggleBlock(context),
             child: Icon(
               isBlocked ? Icons.block : Icons.block_outlined,
               size: 17,
