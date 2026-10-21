@@ -347,6 +347,7 @@ abstract final class RequestUtils {
                         parameters: {
                           'url':
                               'https://www.bilibili.com/h5/comment/appeal?${ThemeUtils.themeUrl(colorScheme.isDark)}',
+                          'appealSource': 'https://www.bilibili.com/opus/$id',
                         },
                       );
                     },

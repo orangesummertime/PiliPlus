@@ -109,21 +109,22 @@ abstract final class ReplyUtils {
               TextButton(
                 onPressed: () {
                   Get.back();
-                  String? uri;
+                  String? appealSource;
                   switch (type) {
                     case 1:
-                      uri = IdUtils.av2bv(oid);
+                      appealSource = IdUtils.av2bv(oid);
                     case 17:
-                      uri = 'https://www.bilibili.com/opus/$oid';
+                      appealSource = 'https://www.bilibili.com/opus/$oid';
                   }
-                  if (uri != null) {
-                    Utils.copyText(uri);
+                  if (appealSource != null) {
+                    Utils.copyText(appealSource);
                   }
                   Get.toNamed(
                     '/webview',
                     parameters: {
                       'url':
                           'https://www.bilibili.com/h5/comment/appeal?${ThemeUtils.themeUrl(colorScheme.isDark)}',
+                      'appealSource': ?appealSource,
                     },
                   );
                 },

@@ -45,6 +45,8 @@ abstract final class PiliScheme {
     // registerProtocolHandler('bilibili');
     appLinks = AppLinks();
 
+    // uriLinkStream also emits the link that cold-started the app,
+    // so no separate getInitialLink() call (it would push the page twice).
     listener?.cancel();
     listener = appLinks.uriLinkStream.listen(
       PlatformUtils.isDesktop ? _desktopRoutePush : routePush,
@@ -114,6 +116,7 @@ abstract final class PiliScheme {
 
     switch (scheme) {
       case 'bilibili':
+      case 'piliplus':
         switch (host) {
           case 'root':
             Get.key.currentState!.popUntil(

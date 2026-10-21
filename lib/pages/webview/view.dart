@@ -1,3 +1,4 @@
+import 'dart:convert' show jsonEncode;
 import 'dart:io' show Platform;
 
 import 'package:PiliPlus/common/widgets/route_aware_mixin.dart'
@@ -49,6 +50,101 @@ class _WebviewPageState extends State<WebviewPage> with RouteAware {
 
   InAppWebViewController? _webViewController;
   LinuxWebviewController? _linuxController;
+  late final String _appealSource = Get.parameters['appealSource'] ?? '';
+
+  static const _defaultAppealReason =
+      '该评论内容属于正常交流，不含违法违规、攻击或不当内容，可能存在误判，恳请重新审核。';
+
+  Future<void> _autofillCommentAppeal(
+    InAppWebViewController controller,
+  ) async {
+    final source = jsonEncode(_appealSource);
+    final reason = jsonEncode(_defaultAppealReason);
+    await controller.evaluateJavascript(
+      source:
+          '''
+(() => {
+  const appealSource = $source;
+  const appealReason = $reason;
+
+  const fields = () => Array.from(document.querySelectorAll(
+    'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"]'
+  )).filter((element) => element.getClientRects().length > 0);
+
+  const fieldText = (element) => {
+    const container = element.closest(
+      'label, .van-field, .form-item, .input-item, .field-item'
+    );
+    return [
+      element.getAttribute('placeholder'),
+      element.getAttribute('name'),
+      element.getAttribute('id'),
+      element.getAttribute('aria-label'),
+      container && container.innerText,
+    ].filter(Boolean).join(' ').toLowerCase();
+  };
+
+  const findField = (allFields, keywords) => allFields.find((element) => {
+    const text = fieldText(element);
+    return keywords.some((keyword) => text.includes(keyword));
+  });
+
+  const valueOf = (element) => element.isContentEditable
+    ? element.textContent.trim()
+    : element.value.trim();
+
+  const setValue = (element, value) => {
+    if (!element || !value || valueOf(element)) return;
+    if (element.isContentEditable) {
+      element.textContent = value;
+    } else {
+      const prototype = element.tagName === 'TEXTAREA'
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+      setter ? setter.call(element, value) : element.value = value;
+    }
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    element.dispatchEvent(new Event('blur', { bubbles: true }));
+  };
+
+  const fill = () => {
+    const allFields = fields();
+    if (!allFields.length) return false;
+
+    let sourceField = findField(allFields, ['来源', '原文链接', '内容链接', 'source', 'url']);
+    let reasonField = findField(allFields, ['申诉理由', '申诉原因', '理由', '原因', 'reason']);
+
+    sourceField ??= allFields.find((element) =>
+      element.tagName === 'INPUT' && ['text', 'url', ''].includes(element.type)
+    );
+    reasonField ??= allFields.find((element) =>
+      element !== sourceField &&
+      (element.tagName === 'TEXTAREA' || element.isContentEditable)
+    );
+
+    setValue(sourceField, appealSource);
+    setValue(reasonField, appealReason);
+
+    return (!appealSource || (sourceField && valueOf(sourceField))) &&
+      reasonField && valueOf(reasonField);
+  };
+
+  if (fill()) return;
+  const observer = new MutationObserver(() => {
+    if (fill()) observer.disconnect();
+  });
+  observer.observe(document.documentElement, {
+    attributes: true,
+    childList: true,
+    subtree: true,
+  });
+  setTimeout(() => observer.disconnect(), 10000);
+})();
+''',
+    );
+  }
 
   @override
   void initState() {
@@ -443,9 +539,15 @@ document.addEventListener('click', function(e) {
                   _title.value = title ?? '';
                 },
                 onCloseWindow: (controller) => Get.back(),
-                onLoadStop: (controller, uri) {
+                onLoadStop: (controller, uri) async {
                   final url = uri.toString();
-                  if (url.startsWith('https://www.bilibili.com/h5/note-app')) {
+                  if (url.startsWith(
+                    'https://www.bilibili.com/h5/comment/appeal',
+                  )) {
+                    await _autofillCommentAppeal(controller);
+                  } else if (url.startsWith(
+                    'https://www.bilibili.com/h5/note-app',
+                  )) {
                     controller
                       ..evaluateJavascript(
                         source: """

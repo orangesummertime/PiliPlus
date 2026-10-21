@@ -1,8 +1,11 @@
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo;
 import 'package:PiliPlus/http/reply.dart';
+import 'package:PiliPlus/http/video.dart';
 import 'package:PiliPlus/utils/feed_back.dart';
+import 'package:PiliPlus/utils/global_data.dart';
 import 'package:PiliPlus/utils/num_utils.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:fixnum/fixnum.dart' as $fixnum;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -12,9 +15,11 @@ class ZanButtonGrpc extends StatelessWidget {
   const ZanButtonGrpc({
     super.key,
     required this.replyItem,
+    this.onBlockedChanged,
   });
 
   final ReplyInfo replyItem;
+  final VoidCallback? onBlockedChanged;
 
   Future<void> onHateReply(
     BuildContext context,
@@ -99,6 +104,46 @@ class ZanButtonGrpc extends StatelessWidget {
     onDone();
   }
 
+  /// mids with a block/unblock request in flight, to ignore repeated taps
+  static final Set<int> _pendingBlockMids = {};
+
+  Future<void> onToggleBlock(BuildContext context) async {
+    final mid = replyItem.mid.toInt();
+    if (!_pendingBlockMids.add(mid)) {
+      return;
+    }
+    try {
+      feedBack();
+      final isBlocked =
+          replyItem.replyControl.blocked ||
+          GlobalData().blackMids.contains(mid);
+      final res = await VideoHttp.relationMod(
+        mid: mid,
+        act: isBlocked ? 6 : 5,
+        reSrc: 11,
+      );
+      if (res.isSuccess) {
+        replyItem.replyControl.blocked = !isBlocked;
+        // keep the local blacklist in sync, otherwise the badge stays after
+        // unblocking (it is also read from GlobalData().blackMids)
+        if (isBlocked) {
+          Pref.removeBlackMid(mid);
+        } else {
+          Pref.setBlackMid(mid);
+        }
+        SmartDialog.showToast(isBlocked ? '已取消拉黑' : '已拉黑');
+        onBlockedChanged?.call();
+        if (context.mounted) {
+          (context as Element).markNeedsBuild();
+        }
+      } else {
+        res.toast();
+      }
+    } finally {
+      _pendingBlockMids.remove(mid);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -106,6 +151,9 @@ class ZanButtonGrpc extends StatelessWidget {
     final action = replyItem.replyControl.action;
     final isLike = action == $fixnum.Int64.ONE;
     final isDislike = action == $fixnum.Int64.TWO;
+    final isBlocked =
+        replyItem.replyControl.blocked ||
+        GlobalData().blackMids.contains(replyItem.mid.toInt());
     final outline = theme.colorScheme.outline;
     final primary = theme.colorScheme.primary;
     final ButtonStyle style = TextButton.styleFrom(
@@ -139,6 +187,24 @@ class ZanButtonGrpc extends StatelessWidget {
               size: 16,
               color: isDislike ? primary : outline,
               semanticLabel: isDislike ? '已踩' : '点踩',
+            ),
+          ),
+        ),
+        SizedBox(
+          height: 32,
+          child: TextButton(
+            style: const ButtonStyle(
+              visualDensity: .compact,
+              tapTargetSize: .shrinkWrap,
+              padding: WidgetStatePropertyAll(.zero),
+              minimumSize: WidgetStatePropertyAll(.square(40)),
+            ),
+            onPressed: () => onToggleBlock(context),
+            child: Icon(
+              isBlocked ? Icons.block : Icons.block_outlined,
+              size: 17,
+              color: isBlocked ? primary : outline,
+              semanticLabel: isBlocked ? '已拉黑' : '拉黑',
             ),
           ),
         ),
