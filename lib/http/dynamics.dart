@@ -276,7 +276,7 @@ abstract final class DynamicsHttp {
         'id': ?id,
         'rid': ?rid,
         'type': ?type,
-        'features': Constants.dynFeatures,
+        'features': Constants.dynDetailFeatures,
         'gaia_source': 'Athena',
         'web_location': '333.1330',
         'x-bili-device-req-json':
@@ -378,7 +378,7 @@ abstract final class DynamicsHttp {
       Api.opusDetail,
       queryParameters: await WbiSign.makSign({
         'timezone_offset': '-480',
-        'features': 'htmlNewStyle',
+        'features': Constants.opusDetailFeatures,
         'id': opusId,
       }),
     );
@@ -456,7 +456,7 @@ abstract final class DynamicsHttp {
 
   static Future<LoadingState<TopicCardList?>> topicFeed({
     required Object topicId,
-    required String offset,
+    String? offset,
     required int sortBy,
   }) async {
     final res = await Request().get(
@@ -464,7 +464,7 @@ abstract final class DynamicsHttp {
       queryParameters: {
         'topic_id': topicId,
         'sort_by': sortBy,
-        'offset': offset,
+        'offset': ?offset,
         'page_size': 20,
         'source': 'Web',
         'features': Constants.dynFeatures,
