@@ -61,7 +61,8 @@ class _WebviewPageState extends State<WebviewPage> with RouteAware {
     final source = jsonEncode(_appealSource);
     final reason = jsonEncode(_defaultAppealReason);
     await controller.evaluateJavascript(
-      source: '''
+      source:
+          '''
 (() => {
   const appealSource = $source;
   const appealReason = $reason;

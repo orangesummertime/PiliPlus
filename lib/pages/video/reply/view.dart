@@ -96,7 +96,8 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
                         const Spacer(),
                         TextButton.icon(
                           style: Style.buttonStyle,
-                          onPressed: _videoReplyController.removedReplies.isEmpty
+                          onPressed:
+                              _videoReplyController.removedReplies.isEmpty
                               ? null
                               : _showRemovedReplies,
                           icon: Icon(
@@ -110,7 +111,8 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
                             '已过滤 ${_videoReplyController.removedReplies.length}',
                             style: TextStyle(
                               fontSize: 13,
-                              color: _videoReplyController.removedReplies.isEmpty
+                              color:
+                                  _videoReplyController.removedReplies.isEmpty
                                   ? colorScheme.outline
                                   : colorScheme.secondary,
                             ),
