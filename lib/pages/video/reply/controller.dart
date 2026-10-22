@@ -10,6 +10,7 @@ import 'package:PiliPlus/pages/video/reply/vote/reply_vote_mixin.dart';
 import 'package:PiliPlus/pages/video/reply_reply/view.dart';
 import 'package:PiliPlus/utils/id_utils.dart';
 import 'package:PiliPlus/utils/reply_scheme_helper.dart';
+import 'package:fixnum/fixnum.dart' show Int64;
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/widgets.dart' show BoxConstraints, WidgetsBinding;
 import 'package:get/get.dart';
@@ -95,5 +96,16 @@ class VideoReplyController extends ReplyController<MainListReply>
   Future<void> onRefresh() {
     removedReplies.clear();
     return super.onRefresh();
+  }
+
+  @override
+  Future<void> queryData([bool isRefresh = true]) async {
+    await super.queryData(isRefresh);
+    // in the classic layout the hot and the by-time requests can filter the
+    // same reply; count it once
+    final ids = <Int64>{};
+    final before = removedReplies.length;
+    removedReplies.retainWhere((e) => ids.add(e.id));
+    if (removedReplies.length != before) removedReplies.refresh();
   }
 }

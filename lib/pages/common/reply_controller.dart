@@ -129,9 +129,117 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
   @override
   void onInit() {
     super.onInit();
-    final cacheSortType = prefSortType;
+    var cacheSortType = prefSortType;
+    if (cacheSortType == .classic && !supportsClassic) {
+      cacheSortType = .hot;
+    }
     sortType = cacheSortType.obs;
-    mode = cacheSortType == .time ? Mode.MAIN_LIST_TIME : Mode.MAIN_LIST_HOT;
+    mode = cacheSortType == .hot ? Mode.MAIN_LIST_HOT : Mode.MAIN_LIST_TIME;
+  }
+
+  // ---- 经典: a few hot replies first, then all replies by time ----
+
+  /// Only the top level comment list offers the classic layout.
+  bool get supportsClassic => this is ReplyController<MainListReply>;
+
+  bool get isClassic => sortType.value == ReplySortType.classic;
+
+  /// Hot replies shown before the "更多热门评论" button.
+  late final int classicHotCount = Pref.classicHotReplyCount;
+
+  final classicHot = RxList<ReplyInfo>();
+  final classicUpTop = Rxn<ReplyInfo>();
+  final classicHotExpanded = false.obs;
+  final classicHotLoading = false.obs;
+  bool classicHotEnd = true;
+  Int64? _classicHotCursor;
+
+  void _clearClassic() {
+    classicHot.clear();
+    classicUpTop.value = null;
+    classicHotExpanded.value = false;
+    classicHotEnd = true;
+    _classicHotCursor = null;
+  }
+
+  /// Requests a page of hot replies without touching the paging state of the
+  /// main (by time) list.
+  Future<MainListReply?> _fetchHotPage(Int64? cursor) async {
+    final savedMode = mode;
+    final savedCursor = cursorNext;
+    final savedPagination = paginationReply;
+    mode = Mode.MAIN_LIST_HOT;
+    cursorNext = cursor;
+    paginationReply = null;
+    try {
+      final res = await customGetData();
+      if (res case Success(:final response)) {
+        final data = response as MainListReply;
+        _removeIntro(data);
+        _classicHotCursor = data.cursor.next;
+        classicHotEnd = data.cursor.isEnd;
+        return data;
+      }
+      return null;
+    } finally {
+      mode = savedMode;
+      cursorNext = savedCursor;
+      paginationReply = savedPagination;
+    }
+  }
+
+  @override
+  Future<void> queryData([bool isRefresh = true]) async {
+    if (isRefresh && !isLoading) {
+      if (isClassic) {
+        isLoading = true;
+        final data = await _fetchHotPage(null);
+        isLoading = false;
+        classicHotExpanded.value = false;
+        classicHot.assignAll(data?.replies ?? const []);
+      } else {
+        _clearClassic();
+      }
+    }
+    return super.queryData(isRefresh);
+  }
+
+  /// "更多热门评论": expand the loaded hot replies, then load more pages.
+  Future<void> onClassicHotMore() async {
+    if (!classicHotExpanded.value) {
+      classicHotExpanded.value = true;
+      if (classicHot.length > classicHotCount || classicHotEnd) {
+        return;
+      }
+    }
+    if (classicHotEnd || classicHotLoading.value) return;
+    classicHotLoading.value = true;
+    final data = await _fetchHotPage(_classicHotCursor);
+    classicHotLoading.value = false;
+    if (data != null && isClassic) {
+      final ids = {for (final e in classicHot) e.id};
+      classicHot.addAll(data.replies.where((e) => ids.add(e.id)));
+    }
+  }
+
+  void onClassicHotCollapse() => classicHotExpanded.value = false;
+
+  /// Removes a reply shown in the classic head (pinned or hot).
+  void onRemoveClassic(ReplyInfo item, int? subIndex) {
+    if (subIndex == null) {
+      if (identical(classicUpTop.value, item)) {
+        classicUpTop.value = null;
+      } else {
+        classicHot.remove(item);
+      }
+    } else {
+      item
+        ..count -= 1
+        ..replies.removeAt(subIndex);
+      classicHot.refresh();
+      classicUpTop.refresh();
+    }
+    count.value -= 1;
   }
 
   @override
@@ -164,7 +272,11 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
     if (isRefresh) {
       subjectControl = data.subjectControl;
       upMid = data.subjectControl.upMid;
-      if (hasUpTop = data.hasUpTop()) {
+      if (isClassic) {
+        // the pinned reply leads the classic head, above the hot replies
+        hasUpTop = false;
+        classicUpTop.value = data.hasUpTop() ? data.upTop : null;
+      } else if (hasUpTop = data.hasUpTop()) {
         data.replies.insert(0, data.upTop);
       }
       if (subjectControl?.title == ReplySortType.select.desc) {
@@ -195,6 +307,12 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
         mode = Mode.MAIN_LIST_HOT;
         break;
       case ReplySortType.hot:
+        sortType.value = supportsClassic
+            ? ReplySortType.classic
+            : ReplySortType.time;
+        mode = Mode.MAIN_LIST_TIME;
+        break;
+      case ReplySortType.classic:
         sortType.value = ReplySortType.time;
         mode = Mode.MAIN_LIST_TIME;
         break;
@@ -341,7 +459,16 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
     );
     if (res.isSuccess) {
       item.replyControl.isUpTop = !isUpTop;
-      if (!isUpTop && index != 0) {
+      if (isClassic) {
+        // the pinned reply lives in the classic head, not in the list
+        if (!isUpTop) {
+          classicUpTop.value?.replyControl.isUpTop = false;
+          classicUpTop.value = item;
+        } else if (identical(classicUpTop.value, item)) {
+          classicUpTop.value = null;
+        }
+        classicUpTop.refresh();
+      } else if (!isUpTop && index != 0) {
         final list = loadingState.value.data!;
         list
           ..first.replyControl.isUpTop = false

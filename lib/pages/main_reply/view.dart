@@ -10,6 +10,7 @@ import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo;
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/pages/common/fab_mixin.dart';
+import 'package:PiliPlus/pages/common/reply/classic_reply_head.dart';
 import 'package:PiliPlus/pages/main_reply/controller.dart';
 import 'package:PiliPlus/pages/video/reply/widgets/reply_item_grpc.dart';
 import 'package:PiliPlus/pages/video/reply_reply/view.dart';
@@ -118,43 +119,7 @@ class _MainReplyPageState extends State<MainReplyPage>
       ),
       Success(:final response) =>
         response != null && response.isNotEmpty
-            ? SliverList.builder(
-                itemCount: response.length + 1,
-                itemBuilder: (context, index) {
-                  if (index == response.length) {
-                    _controller.onLoadMore();
-                    return Container(
-                      alignment: Alignment.center,
-                      margin: EdgeInsets.only(bottom: padding.bottom),
-                      height: 125,
-                      child: Text(
-                        _controller.isEnd ? '没有更多了' : '加载中...',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colorScheme.outline,
-                        ),
-                      ),
-                    );
-                  } else {
-                    return ReplyItemGrpc(
-                      replyItem: response[index],
-                      replyLevel: 1,
-                      replyReply: throttleReplyReply,
-                      onReply: _controller.onReply,
-                      onDelete: (item, subIndex) =>
-                          _controller.onRemove(index, item, subIndex),
-                      upMid: _controller.upMid,
-                      onCheckReply: _controller.onCheckReply,
-                      onToggleTop: (item) => _controller.onToggleTop(
-                        item,
-                        index,
-                        _controller.oid,
-                        _controller.replyType,
-                      ),
-                    );
-                  }
-                },
-              )
+            ? _buildList(response)
             : HttpError(
                 errMsg: '还没有评论',
                 onReload: _controller.onReload,
@@ -164,6 +129,72 @@ class _MainReplyPageState extends State<MainReplyPage>
         onReload: _controller.onReload,
       ),
     };
+  }
+
+  /// A pinned or hot reply in the classic head.
+  Widget _buildClassicItem(ReplyInfo item) => ReplyItemGrpc(
+    replyItem: item,
+    replyLevel: 1,
+    replyReply: throttleReplyReply,
+    onReply: _controller.onReply,
+    onDelete: _controller.onRemoveClassic,
+    upMid: _controller.upMid,
+    onCheckReply: _controller.onCheckReply,
+    onToggleTop: (item) => _controller.onToggleTop(
+      item,
+      -1,
+      _controller.oid,
+      _controller.replyType,
+    ),
+  );
+
+  Widget _buildList(List<ReplyInfo> response) {
+    final head = buildClassicReplyHead(
+      controller: _controller,
+      colorScheme: colorScheme,
+      buildItem: _buildClassicItem,
+    );
+    return SliverList.builder(
+      itemCount: response.length + 1 + head.length,
+      itemBuilder: (context, index) {
+        if (index < head.length) {
+          return head[index];
+        }
+        index -= head.length;
+        if (index == response.length) {
+          _controller.onLoadMore();
+          return Container(
+            alignment: Alignment.center,
+            margin: EdgeInsets.only(bottom: padding.bottom),
+            height: 125,
+            child: Text(
+              _controller.isEnd ? '没有更多了' : '加载中...',
+              style: TextStyle(
+                fontSize: 12,
+                color: colorScheme.outline,
+              ),
+            ),
+          );
+        } else {
+          return ReplyItemGrpc(
+            replyItem: response[index],
+            replyLevel: 1,
+            replyReply: throttleReplyReply,
+            onReply: _controller.onReply,
+            onDelete: (item, subIndex) =>
+                _controller.onRemove(index, item, subIndex),
+            upMid: _controller.upMid,
+            onCheckReply: _controller.onCheckReply,
+            onToggleTop: (item) => _controller.onToggleTop(
+              item,
+              index,
+              _controller.oid,
+              _controller.replyType,
+            ),
+          );
+        }
+      },
+    );
   }
 
   Widget buildReplyHeader() {
