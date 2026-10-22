@@ -16,6 +16,8 @@ import 'package:flutter/foundation.dart';
 ///   query(cursor, ps) → the `ps` comments with floor < cursor, newest first,
 ///                        and the floor of the last one
 ///
+/// Floors count from 0 (the first comment, 1L, is floor 0).
+///
 /// Deleted or hidden comments keep their floor, so a page usually skips some
 /// numbers. Where a run of comments spans exactly as many floors as it has
 /// comments, their floors follow; otherwise the run is split by pinning the

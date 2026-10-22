@@ -161,6 +161,38 @@ void main() {
     expect(armedEvents, isEmpty);
   });
 
+  testWidgets('打开回复区（底部面板）时：右滑关闭面板，不退出页面', (tester) async {
+    await _pumpTwoPages(tester);
+    var sheetClosed = false;
+    ModalRoute.of(tester.element(find.text('second')))!.addLocalHistoryEntry(
+      LocalHistoryEntry(onRemove: () => sheetClosed = true),
+    );
+    await tester.pump();
+
+    // short swipe: not armed, nothing happens
+    var gesture = await _dragFromRightEdge(tester, 40);
+    expect(_secondPageLeft(tester), 0, reason: 'the page does not move');
+    expect(_indicator, findsOneWidget);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(sheetClosed, isFalse);
+
+    gesture = await _dragFromRightEdge(tester, 100);
+    expect(armedEvents, [true]);
+    expect(_secondPageLeft(tester), 0);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(sheetClosed, isTrue, reason: 'closes the sheet');
+    expect(find.text('second'), findsOneWidget, reason: 'stays on the page');
+    expect(_indicator, findsNothing);
+
+    // with the sheet closed, the swipe goes back again
+    gesture = await _dragFromRightEdge(tester, 100);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(find.text('second'), findsNothing);
+  });
+
   testWidgets('首页不能右滑返回', (tester) async {
     tester.view
       ..physicalSize = _size

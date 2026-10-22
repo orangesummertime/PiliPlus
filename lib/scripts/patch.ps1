@@ -277,10 +277,6 @@ $BottomSheetIOSFlutterPatchCupertino = "lib/scripts/cupertino/bottom_sheet_ios_f
 # because the app references `CupertinoEndEdgeBackGesture`
 $EndEdgeBackGesturePatchCupertino = "lib/scripts/cupertino/end_edge_back_gesture.patch"
 
-# iOS: also allow the right edge swipe while a bottom sheet is open, like the
-# left edge one (needs bottom_sheet_ios_flutter.patch, so it is applied after)
-$EndEdgeBackGestureIOSPatchCupertino = "lib/scripts/cupertino/end_edge_back_gesture_ios.patch"
-
 $patches_cupertino = @($EndEdgeBackGesturePatchCupertino)
 
 switch ($platform.ToLower()) {
@@ -288,7 +284,6 @@ switch ($platform.ToLower()) {
     }
     "ios" {
         $patches_cupertino += $BottomSheetIOSFlutterPatchCupertino
-        $patches_cupertino += $EndEdgeBackGestureIOSPatchCupertino
     }
     "linux" {
     }

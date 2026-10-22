@@ -48,12 +48,13 @@ class _ReplyFloorTagState extends State<ReplyFloorTag> {
     return ListenableBuilder(
       listenable: widget.resolver,
       builder: (context, _) {
+        // the server counts from 0; the first comment is #1 (1L)
         final floor = widget.resolver.floorOf(widget.reply.id.toInt());
         return AnimatedSize(
           duration: const Duration(milliseconds: 150),
           child: floor == null
               ? const SizedBox.shrink()
-              : Text('  #$floor', style: widget.style),
+              : Text('  #${floor + 1}', style: widget.style),
         );
       },
     );
