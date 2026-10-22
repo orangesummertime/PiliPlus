@@ -12,6 +12,7 @@ import 'package:PiliPlus/pages/common/fab_mixin.dart';
 import 'package:PiliPlus/pages/video/reply/controller.dart';
 import 'package:PiliPlus/pages/video/reply/vote/reply_vote_item.dart';
 import 'package:PiliPlus/pages/video/reply/widgets/reply_item_grpc.dart';
+import 'package:PiliPlus/pages/video/reply_reply/view.dart';
 import 'package:PiliPlus/utils/feed_back.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
@@ -302,15 +303,47 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
                   itemCount: _videoReplyController.removedReplies.length,
                   itemBuilder: (context, index) {
                     final reply = _videoReplyController.removedReplies[index];
-                    return ReplyItemGrpc(
+                    final item = ReplyItemGrpc(
                       replyItem: reply,
                       replyLevel: widget.replyLevel,
-                      replyReply: _videoReplyController.replyReply,
+                      replyReply: _openRemovedReplyThread,
                       onReply: _videoReplyController.onReply,
                       upMid: _videoReplyController.upMid,
                       getTag: () => heroTag,
                       onCheckReply: (item) => _videoReplyController
                           .onCheckReply(item, isManual: true),
+                    );
+                    if (!_isSubReply(reply)) return item;
+                    // a filtered reply inside a thread: show it nested
+                    final outline = Theme.of(context).colorScheme.outline;
+                    return Padding(
+                      padding: const .only(left: 24),
+                      child: Column(
+                        crossAxisAlignment: .start,
+                        children: [
+                          Padding(
+                            padding: const .fromLTRB(12, 10, 12, 0),
+                            child: Row(
+                              spacing: 4,
+                              children: [
+                                Icon(
+                                  Icons.subdirectory_arrow_right,
+                                  size: 14,
+                                  color: outline,
+                                ),
+                                Text(
+                                  '楼中楼回复',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: outline,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          item,
+                        ],
+                      ),
                     );
                   },
                 ),
@@ -319,6 +352,22 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
           ],
         ),
       ),
+    );
+  }
+
+  static bool _isSubReply(ReplyInfo reply) =>
+      reply.root != 0 && reply.root != reply.id;
+
+  /// Opens the thread of a filtered reply as a page above the sheet; the
+  /// in-page thread panel would open underneath the modal sheet.
+  void _openRemovedReplyThread(ReplyInfo reply, int? childId) {
+    final isSub = _isSubReply(reply);
+    VideoReplyReplyPanel.toReply(
+      oid: reply.oid.toInt(),
+      // a filtered sub reply belongs to its root's thread
+      rootId: isSub ? reply.root.toInt() : reply.id.toInt(),
+      rpId: isSub ? reply.id.toInt() : childId,
+      type: reply.type.toInt(),
     );
   }
 }
