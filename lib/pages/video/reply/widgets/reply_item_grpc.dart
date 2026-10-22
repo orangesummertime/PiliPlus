@@ -18,6 +18,7 @@ import 'package:PiliPlus/common/widgets/translucent_row.dart';
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo, ReplyControl, Content, Url, ReplyControl_VoteOption, Emote;
 import 'package:PiliPlus/grpc/reply.dart';
+import 'package:PiliPlus/pages/common/reply/reply_floor_tag.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/http/reply.dart';
 import 'package:PiliPlus/http/video.dart';
@@ -46,6 +47,7 @@ import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
+import 'package:PiliPlus/utils/reply_floor.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/theme_utils.dart';
 import 'package:PiliPlus/utils/url_utils.dart';
@@ -67,6 +69,7 @@ class ReplyItemGrpc extends StatelessWidget {
     required this.replyItem,
     required this.replyLevel,
     this.replyReply,
+    this.floorResolver,
     this.needDivider = true,
     this.onReply,
     this.onDelete,
@@ -81,6 +84,9 @@ class ReplyItemGrpc extends StatelessWidget {
   final ReplyInfo replyItem;
   final int replyLevel;
   final Function(ReplyInfo replyItem, int? rpid)? replyReply;
+
+  /// Shows the floor (#N) of this top level comment when set.
+  final ReplyFloorResolver? floorResolver;
   final bool needDivider;
   final ValueChanged<ReplyInfo>? onReply;
   final Function(ReplyInfo replyItem, int? subIndex)? onDelete;
@@ -228,6 +234,16 @@ class ReplyItemGrpc extends StatelessWidget {
                 Row(
                   mainAxisSize: .min,
                   children: [
+                    if (floorResolver case final resolver?
+                        when !replyItem.replyControl.isUpTop)
+                      ReplyFloorTag(
+                        resolver: resolver,
+                        reply: replyItem,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colorScheme.outline,
+                        ),
+                      ),
                     Text(
                       replyLevel == 0
                           ? DateFormatUtils.format(

@@ -11,6 +11,7 @@ import 'package:PiliPlus/pages/common/common_list_controller.dart';
 import 'package:PiliPlus/pages/common/publish/publish_route.dart';
 import 'package:PiliPlus/pages/video/reply_new/view.dart';
 import 'package:PiliPlus/utils/feed_back.dart';
+import 'package:PiliPlus/utils/reply_floor.dart';
 import 'package:PiliPlus/utils/reply_scheme_helper.dart';
 import 'package:PiliPlus/utils/reply_utils.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
@@ -224,6 +225,33 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
 
   void onClassicHotCollapse() => classicHotExpanded.value = false;
 
+  // ---- 楼层号 ----
+
+  /// Comment area of the top level list, for floor lookups.
+  int? get floorOid => null;
+  int? get floorType => null;
+
+  late final bool _showReplyFloor = Pref.showReplyFloor;
+  ReplyFloorResolver? _floorResolver;
+
+  /// Floors are shown for the top level list sorted by time (最新, and the
+  /// by-time part of 经典).
+  ReplyFloorResolver? get floorResolver {
+    if (!_showReplyFloor || !supportsClassic) return null;
+    if (sortType.value != ReplySortType.time && !isClassic) return null;
+    final oid = floorOid;
+    final type = floorType;
+    if (oid == null || type == null) return null;
+    return _floorResolver ??= ReplyFloorResolver(
+      fetch: (cursor, ps) => ReplyFloorHttp.fetch(
+        oid: oid,
+        type: type,
+        cursor: cursor,
+        ps: ps,
+      ),
+    );
+  }
+
   /// Removes a reply shown in the classic head (pinned or hot).
   void onRemoveClassic(ReplyInfo item, int? subIndex) {
     if (subIndex == null) {
@@ -292,6 +320,7 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
 
   @override
   Future<void> onRefresh() {
+    _floorResolver?.restart();
     cursorNext = null;
     subjectControl = null;
     paginationReply = null;
@@ -483,6 +512,8 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
 
   @override
   void onClose() {
+    _floorResolver?.dispose();
+    _floorResolver = null;
     savedReplies.clear();
     super.onClose();
   }

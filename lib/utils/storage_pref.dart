@@ -408,6 +408,9 @@ abstract final class Pref {
   static int get classicHotReplyCount =>
       _setting.get(SettingBoxKey.classicHotReplyCount, defaultValue: 3);
 
+  static bool get showReplyFloor =>
+      _setting.get(SettingBoxKey.showReplyFloor, defaultValue: false);
+
   static int? get replyLengthLimit {
     int length = _setting.get(SettingBoxKey.replyLengthLimit, defaultValue: 6);
     if (length <= 0) {

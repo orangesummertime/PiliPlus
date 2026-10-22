@@ -225,6 +225,7 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
                 final child = ReplyItemGrpc(
                   replyItem: item,
                   replyLevel: widget.replyLevel,
+                  floorResolver: _videoReplyController.floorResolver,
                   replyReply: _videoReplyController.replyReply,
                   onReply: _videoReplyController.onReply,
                   onDelete: (item, subIndex) =>
