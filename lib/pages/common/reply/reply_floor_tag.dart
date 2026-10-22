@@ -3,7 +3,8 @@ import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
 import 'package:PiliPlus/utils/reply_floor.dart';
 import 'package:material_ui/material_ui.dart';
 
-/// `#123` at the top right of a top level comment, shown once its floor is
+/// `#123` after the time and IP location of a top level comment, shown once
+/// its floor is
 /// resolved (see [ReplyFloorResolver]).
 class ReplyFloorTag extends StatefulWidget {
   const ReplyFloorTag({
@@ -52,7 +53,7 @@ class _ReplyFloorTagState extends State<ReplyFloorTag> {
           duration: const Duration(milliseconds: 150),
           child: floor == null
               ? const SizedBox.shrink()
-              : Text('#$floor', style: widget.style),
+              : Text('  #$floor', style: widget.style),
         );
       },
     );
