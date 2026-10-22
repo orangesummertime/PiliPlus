@@ -154,6 +154,29 @@ class ReplyItemGrpc extends StatelessWidget {
   }
 
   Widget _buildHeader(BuildContext context, ColorScheme colorScheme) {
+    final header = _buildHeaderContent(context, colorScheme);
+    if (floorResolver case final resolver?
+        when !replyItem.replyControl.isUpTop) {
+      // floor number at the top right; a fan card decoration moves left
+      return Row(
+        crossAxisAlignment: .start,
+        children: [
+          Expanded(child: header),
+          Padding(
+            padding: const .only(left: 8, top: 1),
+            child: ReplyFloorTag(
+              resolver: resolver,
+              reply: replyItem,
+              style: TextStyle(fontSize: 12, color: colorScheme.outline),
+            ),
+          ),
+        ],
+      );
+    }
+    return header;
+  }
+
+  Widget _buildHeaderContent(BuildContext context, ColorScheme colorScheme) {
     final member = replyItem.member;
     Widget header = GestureDetector(
       onTap: () {
@@ -234,16 +257,6 @@ class ReplyItemGrpc extends StatelessWidget {
                 Row(
                   mainAxisSize: .min,
                   children: [
-                    if (floorResolver case final resolver?
-                        when !replyItem.replyControl.isUpTop)
-                      ReplyFloorTag(
-                        resolver: resolver,
-                        reply: replyItem,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: colorScheme.outline,
-                        ),
-                      ),
                     Text(
                       replyLevel == 0
                           ? DateFormatUtils.format(
