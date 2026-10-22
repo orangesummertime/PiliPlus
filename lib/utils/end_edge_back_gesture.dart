@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 
+import 'package:PiliPlus/utils/feed_back.dart' show enableFeedback;
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:cupertino_ui/cupertino_ui.dart'
     show CupertinoEndEdgeBackGesture;
@@ -23,6 +24,8 @@ abstract final class EndEdgeBackGesture {
   }
 
   static void _onArmedChanged(bool armed) {
+    // follows the global 震动反馈 setting like the rest of the app
+    if (!enableFeedback) return;
     if (armed) {
       // releasing now goes back
       HapticFeedback.heavyImpact();

@@ -113,7 +113,7 @@ List<SettingsModel> get styleSettings => [
   if (Platform.isIOS)
     const SwitchModel(
       title: '右侧边缘返回手势',
-      subtitle: '从屏幕右边缘向左滑动返回上一页，松手生效（页面过渡动画需为 native 或 cupertino）',
+      subtitle: '从屏幕右边缘向左滑动返回上一页，松手生效；震动随「震动反馈」设置（页面过渡动画需为 native 或 cupertino）',
       leading: Icon(Icons.swipe_left_outlined),
       setKey: SettingBoxKey.endEdgeBackGesture,
       onChanged: EndEdgeBackGesture.setEnabled,

@@ -1,0 +1,49 @@
+diff --git a/lib/src/route.dart b/lib/src/route.dart
+index e0c8ee3..7a0582e 100644
+--- a/lib/src/route.dart
++++ b/lib/src/route.dart
+@@ -1717,7 +1717,7 @@ class _CupertinoEndEdgeBackGestureDetectorState
+   @override
+   void initState() {
+     super.initState();
+-    _recognizer = HorizontalDragGestureRecognizer(debugOwner: this)
++    _recognizer = _HorizontalDragGestureRecognizer(debugOwner: this)
+       // count the distance from the touch down, including the slop
+       ..dragStartBehavior = DragStartBehavior.down
+       ..onStart = _handleDragStart
+@@ -1809,11 +1809,21 @@ class _CupertinoEndEdgeBackGestureDetectorState
+ 
+   void _handlePointerDown(PointerDownEvent event) {
+     final ModalRoute<Object?>? route = _route;
+-    if (CupertinoEndEdgeBackGesture.enabled &&
+-        route != null &&
+-        route.popGestureEnabled &&
+-        (route is! PageRoute<Object?> || !route.fullscreenDialog)) {
+-      _recognizer.addPointer(event);
++    if (!CupertinoEndEdgeBackGesture.enabled ||
++        route == null ||
++        (route is PageRoute<Object?> && route.fullscreenDialog)) {
++      return;
++    }
++    if (route.popGestureEnabled) {
++      _recognizer
++        ..gestureSettings = null
++        ..addPointer(event);
++    } else if (route.popGestureEnabled_) {
++      // a bottom sheet is open: same as the start edge back swipe, use a
++      // larger slop and pop the whole route
++      _recognizer
++        ..gestureSettings = const DeviceGestureSettings(touchSlop: 28)
++        ..addPointer(event);
+     }
+   }
+ 
+@@ -1876,7 +1886,7 @@ class _CupertinoEndEdgeBackGestureController {
+       );
+     } else {
+       if (isCurrent) {
+-        navigator.pop();
++        navigator.pop(gesturePop);
+       }
+       if (controller.isAnimating) {
+         controller.animateBack(
