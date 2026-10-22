@@ -7,16 +7,14 @@ import 'package:flutter/services.dart' show HapticFeedback;
 
 /// Back by swiping from the right screen edge towards the left (iOS).
 ///
-/// The gesture itself lives in the patched `cupertino_ui` next to the regular
-/// iOS back swipe (lib/scripts/cupertino/end_edge_back_gesture.patch), so it
-/// shares its behavior: the page follows the finger and reveals the previous
-/// page, and the route only pops on release (past half way, or with a fling).
+/// The gesture lives in the patched `cupertino_ui`
+/// (lib/scripts/cupertino/end_edge_back_gesture.patch): it plays the regular
+/// back transition with a preview of the previous page, shows an Android
+/// style arrow at the edge, and pops on release once dragged past a short
+/// distance (dragging back before releasing cancels).
 abstract final class EndEdgeBackGesture {
   static void init() {
-    // tick when crossing the point where releasing would go back
-    CupertinoEndEdgeBackGesture.onWillPopChanged = _onWillPopChanged;
-    // confirm the pop on release
-    CupertinoEndEdgeBackGesture.onPop = HapticFeedback.mediumImpact;
+    CupertinoEndEdgeBackGesture.onArmedChanged = _onArmedChanged;
     setEnabled(Pref.endEdgeBackGesture);
   }
 
@@ -24,7 +22,13 @@ abstract final class EndEdgeBackGesture {
     CupertinoEndEdgeBackGesture.enabled = Platform.isIOS && value;
   }
 
-  static void _onWillPopChanged(bool willPop) {
-    HapticFeedback.selectionClick();
+  static void _onArmedChanged(bool armed) {
+    if (armed) {
+      // releasing now goes back
+      HapticFeedback.heavyImpact();
+    } else {
+      // dragged back: releasing now cancels
+      HapticFeedback.lightImpact();
+    }
   }
 }

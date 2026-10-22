@@ -2,7 +2,7 @@
 import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _size = Size(400, 800);
+const _size = Size(400, 800); // arm distance: 400 * 0.2 = 80
 
 Future<void> _pumpTwoPages(WidgetTester tester) async {
   tester.view
@@ -28,113 +28,122 @@ Future<void> _pumpTwoPages(WidgetTester tester) async {
 double _secondPageLeft(WidgetTester tester) =>
     tester.getTopLeft(find.byType(ColoredBox).last).dx;
 
+final _indicator = find.byKey(CupertinoEndEdgeBackGesture.indicatorKey);
+
+Future<TestGesture> _dragFromRightEdge(WidgetTester tester, double dx) async {
+  final gesture = await tester.startGesture(const Offset(395, 300));
+  // small steps, like a finger
+  final steps = (dx / 10).ceil();
+  for (var i = 0; i < steps; i++) {
+    await gesture.moveBy(
+      Offset(-dx / steps, 0),
+      timeStamp: Duration(milliseconds: 16 * (i + 1)),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  return gesture;
+}
+
 void main() {
-  final willPopEvents = <bool>[];
-  var pops = 0;
+  final armedEvents = <bool>[];
 
   setUp(() {
-    willPopEvents.clear();
-    pops = 0;
+    armedEvents.clear();
     CupertinoEndEdgeBackGesture.enabled = true;
-    CupertinoEndEdgeBackGesture.onWillPopChanged = willPopEvents.add;
-    CupertinoEndEdgeBackGesture.onPop = () => pops++;
+    CupertinoEndEdgeBackGesture.onArmedChanged = armedEvents.add;
   });
 
   tearDown(() {
     CupertinoEndEdgeBackGesture.enabled = false;
-    CupertinoEndEdgeBackGesture.onWillPopChanged = null;
-    CupertinoEndEdgeBackGesture.onPop = null;
+    CupertinoEndEdgeBackGesture.onArmedChanged = null;
   });
 
-  testWidgets('页面跟手向左移动并露出上一页，过半松手返回', (tester) async {
+  testWidgets('像返回一样右移并露出上一页，侧边显示指示器', (tester) async {
     await _pumpTwoPages(tester);
     expect(find.text('first'), findsNothing);
 
-    final gesture = await tester.startGesture(const Offset(395, 400));
-    await gesture.moveBy(const Offset(-20, 0));
-    await gesture.moveBy(const Offset(-100, 0));
-    await tester.pump();
-
-    // previous page is laid out underneath (preview)
-    expect(find.text('first'), findsOneWidget);
-    // mirrored: the page moves left with the finger, not right
+    final gesture = await _dragFromRightEdge(tester, 50);
+    expect(find.text('first'), findsOneWidget, reason: 'preview');
     final left = _secondPageLeft(tester);
-    expect(left, lessThan(0));
-    expect(left, greaterThan(-130));
-    expect(pops, 0, reason: 'must not pop before release');
-    expect(willPopEvents, isEmpty);
-
-    await gesture.moveBy(const Offset(-150, 0));
-    await tester.pump();
-    expect(willPopEvents, [true], reason: 'tick when passing half way');
+    expect(left, greaterThan(40), reason: 'same direction as a back swipe');
+    expect(left, lessThanOrEqualTo(50));
+    expect(_indicator, findsOneWidget);
+    expect(armedEvents, isEmpty, reason: 'not armed yet');
 
     await gesture.up();
     await tester.pumpAndSettle();
-    expect(pops, 1);
-    expect(find.text('second'), findsNothing);
-    expect(find.text('first'), findsOneWidget);
+    expect(find.text('second'), findsOneWidget, reason: 'not armed: cancel');
+    expect(_secondPageLeft(tester), 0);
+    expect(_indicator, findsNothing, reason: 'indicator retracts');
   });
 
-  testWidgets('未过半慢慢松手则回弹，不返回', (tester) async {
+  testWidgets('拖过一小段即触发（不用到屏幕中间），松手才返回', (tester) async {
     await _pumpTwoPages(tester);
 
-    final gesture = await tester.startGesture(const Offset(395, 400));
-    await gesture.moveBy(const Offset(-20, 0));
-    await tester.pump();
-    for (var i = 0; i < 10; i++) {
-      await gesture.moveBy(const Offset(-8, 0));
-      await tester.pump(const Duration(milliseconds: 100));
-    }
-    await tester.pump(const Duration(milliseconds: 300));
+    final gesture = await _dragFromRightEdge(tester, 90);
+    expect(armedEvents, [true]);
+    expect(
+      find.text('second'),
+      findsOneWidget,
+      reason: 'no pop before release',
+    );
+    expect(_secondPageLeft(tester), lessThan(200));
+
     await gesture.up();
     await tester.pumpAndSettle();
+    expect(find.text('second'), findsNothing);
+    expect(find.text('first'), findsOneWidget);
+    expect(_indicator, findsNothing);
+  });
 
-    expect(pops, 0);
+  testWidgets('触发后拖回再松手：取消，并有第二次触感', (tester) async {
+    await _pumpTwoPages(tester);
+
+    final gesture = await _dragFromRightEdge(tester, 100);
+    for (var i = 0; i < 6; i++) {
+      await gesture.moveBy(const Offset(10, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(armedEvents, [true, false]);
+    await tester.pump(const Duration(milliseconds: 200));
+    await gesture.up();
+    await tester.pumpAndSettle();
     expect(find.text('second'), findsOneWidget);
     expect(_secondPageLeft(tester), 0);
   });
 
-  testWidgets('过半后又拖回再松手：回弹，并再次触感提示', (tester) async {
+  testWidgets('触发后快速甩回边缘：取消', (tester) async {
     await _pumpTwoPages(tester);
-
-    final gesture = await tester.startGesture(const Offset(395, 400));
-    await gesture.moveBy(const Offset(-20, 0));
-    await gesture.moveBy(const Offset(-260, 0));
-    await tester.pump();
-    for (var i = 0; i < 12; i++) {
-      await gesture.moveBy(const Offset(20, 0));
-      await tester.pump(const Duration(milliseconds: 100));
+    // ends at t=192ms, then holds still so the flick is measured on its own
+    final gesture = await _dragFromRightEdge(tester, 120);
+    for (var i = 1; i <= 4; i++) {
+      // 8px every 4ms towards the edge: 2000px/s, still armed (88 > 80)
+      await gesture.moveBy(
+        const Offset(8, 0),
+        timeStamp: Duration(milliseconds: 400 + 4 * i),
+      );
     }
-    await tester.pump(const Duration(milliseconds: 300));
-    await gesture.up();
+    await tester.pump();
+    expect(armedEvents, [true], reason: 'still armed when released');
+    await gesture.up(timeStamp: const Duration(milliseconds: 418));
     await tester.pumpAndSettle();
-
-    expect(willPopEvents, [true, false]);
-    expect(pops, 0);
     expect(find.text('second'), findsOneWidget);
-  });
-
-  testWidgets('快速向左甩动即使距离短也返回', (tester) async {
-    await _pumpTwoPages(tester);
-    await tester.flingFrom(const Offset(395, 400), const Offset(-120, 0), 1500);
-    await tester.pumpAndSettle();
-    expect(pops, 1);
-    expect(find.text('second'), findsNothing);
   });
 
   testWidgets('关闭开关后右边缘无效，屏幕中间也不触发', (tester) async {
     await _pumpTwoPages(tester);
 
     CupertinoEndEdgeBackGesture.enabled = false;
-    await tester.dragFrom(const Offset(395, 400), const Offset(-300, 0));
+    await tester.dragFrom(const Offset(395, 400), const Offset(-200, 0));
     await tester.pumpAndSettle();
     expect(find.text('second'), findsOneWidget);
+    expect(_indicator, findsNothing);
 
     CupertinoEndEdgeBackGesture.enabled = true;
     await tester.dragFrom(const Offset(200, 400), const Offset(-190, 0));
     await tester.pumpAndSettle();
     expect(find.text('second'), findsOneWidget);
-    expect(pops, 0);
+    expect(armedEvents, isEmpty);
   });
 
   testWidgets('原有的左边缘返回不受影响', (tester) async {
@@ -143,12 +152,13 @@ void main() {
     await gesture.moveBy(const Offset(20, 0));
     await gesture.moveBy(const Offset(100, 0));
     await tester.pump();
-    expect(_secondPageLeft(tester), greaterThan(0), reason: 'normal direction');
+    expect(_secondPageLeft(tester), greaterThan(0));
+    expect(_indicator, findsNothing);
     await gesture.moveBy(const Offset(200, 0));
     await gesture.up();
     await tester.pumpAndSettle();
     expect(find.text('second'), findsNothing);
-    expect(pops, 0, reason: 'end edge callback not used');
+    expect(armedEvents, isEmpty);
   });
 
   testWidgets('首页不能右滑返回', (tester) async {
@@ -159,9 +169,9 @@ void main() {
     await tester.pumpWidget(
       const CupertinoApp(home: Center(child: Text('first'))),
     );
-    await tester.dragFrom(const Offset(395, 400), const Offset(-300, 0));
+    await tester.dragFrom(const Offset(395, 400), const Offset(-200, 0));
     await tester.pumpAndSettle();
     expect(find.text('first'), findsOneWidget);
-    expect(pops, 0);
+    expect(_indicator, findsNothing);
   });
 }
