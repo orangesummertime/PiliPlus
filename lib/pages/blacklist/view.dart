@@ -14,6 +14,7 @@ import 'package:PiliPlus/models/common/enum_with_label.dart';
 import 'package:PiliPlus/models/common/image_type.dart';
 import 'package:PiliPlus/models_new/blacklist/list.dart';
 import 'package:PiliPlus/pages/blacklist/controller.dart';
+import 'package:PiliPlus/pages/blacklist/rule_sheet.dart';
 import 'package:PiliPlus/pages/search/widgets/search_text.dart';
 import 'package:PiliPlus/utils/date_utils.dart';
 import 'package:PiliPlus/utils/utils.dart';
@@ -176,6 +177,14 @@ class _BlackListPageState extends State<BlackListPage>
           spacing: kFloatingActionButtonMargin,
           mainAxisSize: .min,
           children: [
+            FloatingActionButton(
+              tooltip: '在线 UID 规则',
+              onPressed: () async {
+                await showBlackMidRuleSheet(context);
+                if (mounted) setState(() {});
+              },
+              child: const Icon(Icons.cloud_sync_outlined),
+            ),
             FloatingActionButton(
               tooltip: '导入/导出',
               onPressed: _showImportExportDialog,
