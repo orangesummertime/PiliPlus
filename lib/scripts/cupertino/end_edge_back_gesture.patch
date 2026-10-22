@@ -1,0 +1,265 @@
+diff --git a/lib/src/route.dart b/lib/src/route.dart
+index 2b3b510..221dfc3 100644
+--- a/lib/src/route.dart
++++ b/lib/src/route.dart
+@@ -587,14 +587,35 @@ class _CupertinoPageTransitionState extends State<CupertinoPageTransition> {
+   Widget build(BuildContext context) {
+     assert(debugCheckHasDirectionality(context));
+     final TextDirection textDirection = Directionality.of(context);
++    // PiliPlus: while an end edge back gesture drives this route, mirror the
++    // primary slide and the edge shadow so the page follows the finger
++    // towards the start edge. The content keeps the ambient direction, and
++    // the widget tree shape never changes, so no state is lost.
++    final ModalRoute<Object?>? route = ModalRoute.of(context);
++    final bool mirrored = route != null && CupertinoEndEdgeBackGesture._routes.contains(route);
++    final TextDirection primaryDirection = mirrored
++        ? switch (textDirection) {
++            TextDirection.ltr => TextDirection.rtl,
++            TextDirection.rtl => TextDirection.ltr,
++          }
++        : textDirection;
+     return SlideTransition(
+       position: _secondaryPositionAnimation,
+       textDirection: textDirection,
+       transformHitTests: false,
+       child: SlideTransition(
+         position: _primaryPositionAnimation,
+-        textDirection: textDirection,
+-        child: DecoratedBoxTransition(decoration: _primaryShadowAnimation, child: widget.child),
++        textDirection: primaryDirection,
++        child: Directionality(
++          textDirection: primaryDirection,
++          child: DecoratedBoxTransition(
++            decoration: _primaryShadowAnimation,
++            child: Directionality(
++              textDirection: textDirection,
++              child: _CupertinoEndEdgeBackGestureDetector(child: widget.child),
++            ),
++          ),
++        ),
+       ),
+     );
+   }
+@@ -1639,3 +1660,222 @@ class CupertinoPageTransitionsBuilder extends PageTransitionsBuilder {
+     );
+   }
+ }
++
++// PiliPlus: back gesture from the end (right) edge.
++
++/// Configuration of the end edge back gesture added by PiliPlus.
++///
++/// When [enabled], a drag that starts within the end edge of a page towards
++/// the start edge pops the route on release, mirroring the regular iOS back
++/// swipe: the page follows the finger and the previous page is revealed.
++abstract final class CupertinoEndEdgeBackGesture {
++  /// Whether the gesture is recognized at all.
++  static bool enabled = false;
++
++  /// Called whenever the drag crosses the release threshold; `true` means a
++  /// slow release at the current position would pop the route.
++  static ValueChanged<bool>? onWillPopChanged;
++
++  /// Called when a release commits the pop.
++  static VoidCallback? onPop;
++
++  /// Routes currently driven by an end edge gesture (including the settle
++  /// animation after release).
++  static final Set<ModalRoute<Object?>> _routes = <ModalRoute<Object?>>{};
++}
++
++class _CupertinoEndEdgeBackGestureDetector extends StatefulWidget {
++  const _CupertinoEndEdgeBackGestureDetector({required this.child});
++
++  final Widget child;
++
++  @override
++  State<_CupertinoEndEdgeBackGestureDetector> createState() =>
++      _CupertinoEndEdgeBackGestureDetectorState();
++}
++
++class _CupertinoEndEdgeBackGestureDetectorState
++    extends State<_CupertinoEndEdgeBackGestureDetector> {
++  _CupertinoEndEdgeBackGestureController? _backGestureController;
++
++  late final HorizontalDragGestureRecognizer _recognizer;
++
++  ModalRoute<Object?>? _route;
++
++  @override
++  void initState() {
++    super.initState();
++    _recognizer = HorizontalDragGestureRecognizer(debugOwner: this)
++      ..onStart = _handleDragStart
++      ..onUpdate = _handleDragUpdate
++      ..onEnd = _handleDragEnd
++      ..onCancel = _handleDragCancel;
++  }
++
++  @override
++  void dispose() {
++    _recognizer.dispose();
++    final _CupertinoEndEdgeBackGestureController? controller = _backGestureController;
++    if (controller != null) {
++      _backGestureController = null;
++      WidgetsBinding.instance.addPostFrameCallback((_) => controller.stop());
++    }
++    super.dispose();
++  }
++
++  void _handleDragStart(DragStartDetails details) {
++    final ModalRoute<Object?>? route = _route;
++    if (route == null || !route.isCurrent || route.navigator == null) {
++      return;
++    }
++    _backGestureController ??= _CupertinoEndEdgeBackGestureController(route);
++  }
++
++  void _handleDragUpdate(DragUpdateDetails details) {
++    _backGestureController?.dragUpdate(
++      _convertToLogical(details.primaryDelta! / context.size!.width),
++    );
++  }
++
++  void _handleDragEnd(DragEndDetails details) {
++    _backGestureController?.dragEnd(
++      _convertToLogical(details.velocity.pixelsPerSecond.dx / context.size!.width),
++    );
++    _backGestureController = null;
++  }
++
++  void _handleDragCancel() {
++    _backGestureController?.dragEnd(0.0);
++    _backGestureController = null;
++  }
++
++  void _handlePointerDown(PointerDownEvent event) {
++    final ModalRoute<Object?>? route = _route;
++    if (CupertinoEndEdgeBackGesture.enabled &&
++        route != null &&
++        route.popGestureEnabled &&
++        (route is! PageRoute<Object?> || !route.fullscreenDialog)) {
++      _recognizer.addPointer(event);
++    }
++  }
++
++  // Positive values move towards dismissing the route. For the end edge the
++  // finger travels towards the start edge, the opposite of the regular swipe.
++  double _convertToLogical(double value) {
++    return switch (Directionality.of(context)) {
++      TextDirection.rtl => value,
++      TextDirection.ltr => -value,
++    };
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    assert(debugCheckHasDirectionality(context));
++    _route = ModalRoute.of(context);
++    // For devices with notches, the drag area needs to be larger on the side
++    // that has the notch.
++    final double dragAreaWidth = switch (Directionality.of(context)) {
++      TextDirection.rtl => MediaQuery.paddingOf(context).left,
++      TextDirection.ltr => MediaQuery.paddingOf(context).right,
++    };
++    return Stack(
++      fit: StackFit.passthrough,
++      children: <Widget>[
++        widget.child,
++        PositionedDirectional(
++          end: 0.0,
++          width: max(dragAreaWidth, _kBackGestureWidth),
++          top: 0.0,
++          bottom: 0.0,
++          child: Listener(onPointerDown: _handlePointerDown, behavior: HitTestBehavior.translucent),
++        ),
++      ],
++    );
++  }
++}
++
++/// Drives the route's animation like [_CupertinoBackGestureController], and
++/// marks the route so [CupertinoPageTransition] mirrors its slide.
++class _CupertinoEndEdgeBackGestureController {
++  _CupertinoEndEdgeBackGestureController(this.route)
++    : navigator = route.navigator!,
++      controller = route.controller! { // protected access
++    // must be registered before the transition rebuilds for the gesture
++    CupertinoEndEdgeBackGesture._routes.add(route);
++    navigator.didStartUserGesture();
++  }
++
++  final ModalRoute<Object?> route;
++  final NavigatorState navigator;
++  final AnimationController controller;
++
++  bool _willPop = false;
++  bool _stopped = false;
++
++  void dragUpdate(double delta) {
++    controller.value -= delta;
++    final bool willPop = controller.value <= 0.5;
++    if (willPop != _willPop) {
++      _willPop = willPop;
++      CupertinoEndEdgeBackGesture.onWillPopChanged?.call(willPop);
++    }
++  }
++
++  void dragEnd(double velocity) {
++    const Curve animationCurve = Curves.fastEaseInToSlowEaseOut;
++    final bool isCurrent = route.isCurrent;
++    final bool animateForward;
++
++    if (!isCurrent) {
++      animateForward = route.isActive;
++    } else if (velocity.abs() >= _kMinFlingVelocity) {
++      animateForward = velocity <= 0;
++    } else {
++      animateForward = controller.value > 0.5;
++    }
++
++    if (animateForward) {
++      controller.animateTo(
++        1.0,
++        duration: _kDroppedSwipePageAnimationDuration,
++        curve: animationCurve,
++      );
++    } else {
++      if (isCurrent) {
++        CupertinoEndEdgeBackGesture.onPop?.call();
++        navigator.pop();
++      }
++      if (controller.isAnimating) {
++        controller.animateBack(
++          0.0,
++          duration: _kDroppedSwipePageAnimationDuration,
++          curve: animationCurve,
++        );
++      }
++    }
++
++    if (controller.isAnimating) {
++      // Keep the gesture (and the mirrored, linear transition) until the page
++      // has settled.
++      late AnimationStatusListener animationStatusCallback;
++      animationStatusCallback = (AnimationStatus status) {
++        controller.removeStatusListener(animationStatusCallback);
++        stop();
++      };
++      controller.addStatusListener(animationStatusCallback);
++    } else {
++      stop();
++    }
++  }
++
++  void stop() {
++    if (_stopped) {
++      return;
++    }
++    _stopped = true;
++    CupertinoEndEdgeBackGesture._routes.remove(route);
++    if (navigator.mounted) {
++      navigator.didStopUserGesture();
++    }
++  }
++}

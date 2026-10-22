@@ -17,6 +17,7 @@ import 'package:PiliPlus/services/download/download_service.dart';
 import 'package:PiliPlus/services/logger.dart';
 import 'package:PiliPlus/services/service_locator.dart';
 import 'package:PiliPlus/utils/black_mid_rules.dart';
+import 'package:PiliPlus/utils/end_edge_back_gesture.dart';
 import 'package:PiliPlus/utils/cache_manager.dart';
 import 'package:PiliPlus/utils/date_utils.dart';
 import 'package:PiliPlus/utils/desktop/calc_window_position.dart';
@@ -105,6 +106,7 @@ void main() async {
     DeviceUtils.exitApp();
   }
   ScaledWidgetsFlutterBinding.instance.scaleFactor = Pref.uiScale;
+  EndEdgeBackGesture.init();
   // refresh online UID rule lists in the background (at most once a day)
   unawaited(BlackMidRules.autoUpdate());
   await Future.wait([
