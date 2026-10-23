@@ -9,6 +9,7 @@ import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo;
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/pages/common/fab_mixin.dart';
+import 'package:PiliPlus/pages/common/reply/classic_reply_head.dart';
 import 'package:PiliPlus/pages/video/reply/controller.dart';
 import 'package:PiliPlus/pages/video/reply/vote/reply_vote_item.dart';
 import 'package:PiliPlus/pages/video/reply/widgets/reply_item_grpc.dart';
@@ -157,7 +158,15 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
         );
       case Success(:final response):
         if (response != null && response.isNotEmpty) {
-          var count = response.length + 1;
+          final head = buildClassicReplyHead(
+            controller: _videoReplyController,
+            colorScheme: colorScheme,
+            buildItem: _buildClassicItem,
+          );
+          // classic: replies shown in the head are left out below
+          final indices = _videoReplyController.classicListIndices(response);
+          final listLength = indices?.length ?? response.length;
+          var count = listLength + 1 + head.length;
           final voteCard = _videoReplyController.voteCard;
           final hasVote = voteCard != null;
           if (hasVote) {
@@ -172,7 +181,11 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
                   index--;
                 }
               }
-              if (index == response.length) {
+              if (index < head.length) {
+                return head[index];
+              }
+              index -= head.length;
+              if (index == listLength) {
                 _videoReplyController.onLoadMore();
                 return Container(
                   height: 125,
@@ -185,6 +198,7 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
                   ),
                 );
               } else {
+                index = indices?[index] ?? index;
                 final item = response[index];
                 final child = ReplyItemGrpc(
                   replyItem: item,
@@ -238,4 +252,22 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
         );
     }
   }
+
+  /// A pinned or hot reply in the classic head.
+  Widget _buildClassicItem(ReplyInfo item) => ReplyItemGrpc(
+    replyItem: item,
+    replyLevel: widget.replyLevel,
+    replyReply: _videoReplyController.replyReply,
+    onReply: _videoReplyController.onReply,
+    onDelete: _videoReplyController.onRemoveClassic,
+    upMid: _videoReplyController.upMid,
+    getTag: () => heroTag,
+    onCheckReply: _videoReplyController.onCheckReply,
+    onToggleTop: (item) => _videoReplyController.onToggleTop(
+      item,
+      -1,
+      _videoReplyController.aid,
+      _videoReplyController.videoType.replyType,
+    ),
+  );
 }
