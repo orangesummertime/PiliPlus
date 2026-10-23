@@ -80,6 +80,12 @@ class VideoReplyController extends ReplyController<MainListReply>
   }
 
   @override
+  int? get floorOid => isPugv ? videoCtr.epId : aid;
+
+  @override
+  int? get floorType => videoType.replyType;
+
+  @override
   Future<LoadingState<MainListReply>> customGetData() => ReplyGrpc.mainList(
     oid: isPugv ? videoCtr.epId! : aid,
     rpid: rootRpId,
