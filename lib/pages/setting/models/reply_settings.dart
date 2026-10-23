@@ -128,8 +128,8 @@ List<SettingsModel> get replySettings => [
         .whenComplete(setState),
   ),
   NormalModel(
-    title: '经典模式热评数量',
-    subtitle: '「经典」展示时，按时间排序的评论前先展示的热门评论数',
+    title: '经典模式热评数量上限',
+    subtitle: '「经典」展示时，按时间排序的评论前最多展示的热门评论数；实际数量随评论数增加（20 条起 1 条，之后评论数每翻一倍多 1 条），不足 20 条时不展示热评',
     leading: const Icon(Icons.local_fire_department_outlined),
     getTrailing: (theme) => Text(
       '${Pref.classicHotReplyCount}条',
@@ -204,7 +204,7 @@ void _showClassicHotCountDialog(BuildContext context, VoidCallback setState) {
   showDialog(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('经典模式热评数量'),
+      title: const Text('经典模式热评数量上限'),
       content: TextFormField(
         autofocus: true,
         initialValue: count,
