@@ -22,6 +22,11 @@ import 'package:flutter/foundation.dart';
 /// numbers. Where a run of comments spans exactly as many floors as it has
 /// comments, their floors follow; otherwise the run is split by pinning the
 /// middle comment with another query. Every floor shown is therefore exact.
+///
+/// Comments far down the list (hot or pinned ones) are found by a binary
+/// search instead: floors grow with the post time (give or take a second),
+/// so the search narrows on time, then picks the comment out of the few
+/// around it by id and pins its floor.
 
 /// Comments returned by one [FloorFetcher] call, newest first.
 class FloorChunk {
@@ -50,7 +55,7 @@ class ReplyFloorResolver extends ChangeNotifier {
   ReplyFloorResolver({
     required this.fetch,
     this.minInterval = const Duration(milliseconds: 350),
-    this.maxRequests = 400,
+    this.maxRequests = 800,
   });
 
   final FloorFetcher fetch;
@@ -65,8 +70,16 @@ class ReplyFloorResolver extends ChangeNotifier {
   /// can no longer show up further down.
   static const int _ctimeSlack = 120;
 
+  /// Allowed disorder of post times between neighbouring floors (seconds).
+  static const int _timeJitter = 5;
+
   final Map<int, int> _floors = {};
-  final Map<int, int> _pending = {}; // rpid -> ctime
+  final Map<int, int> _pending = {}; // rpid -> ctime, walked
+  final Map<int, int> _searchPending = {}; // rpid -> ctime, searched
+
+  /// Known (floor, post time) pairs, to narrow searches.
+  final List<(int, int)> _samples = [];
+  int? _topFloor;
 
   int? _cursor; // floors below this are not walked yet; null: from the top
   bool _end = false;
@@ -81,9 +94,12 @@ class ReplyFloorResolver extends ChangeNotifier {
 
   /// Asks for the floor of a top level comment; listeners are notified once
   /// it is known.
-  void request(int rpid, int ctime) {
+  ///
+  /// Comments of the list sorted by time are resolved by walking down from
+  /// the newest; others (hot, pinned) with [search].
+  void request(int rpid, int ctime, {bool search = false}) {
     if (_disposed || _floors.containsKey(rpid)) return;
-    _pending[rpid] = ctime;
+    (search ? _searchPending : _pending)[rpid] = ctime;
     unawaited(_run());
   }
 
@@ -99,14 +115,22 @@ class ReplyFloorResolver extends ChangeNotifier {
     if (_running) return;
     _running = true;
     try {
-      while (!_disposed && !_stopped && !_end && requests < maxRequests) {
+      while (!_disposed && !_stopped && requests < maxRequests) {
+        _searchPending.removeWhere((rpid, _) => _floors.containsKey(rpid));
+        if (_searchPending.isNotEmpty) {
+          // hot and pinned comments sit at the top of the list: first
+          final MapEntry(:key, :value) = _searchPending.entries.first;
+          _searchPending.remove(key);
+          await _search(key, value);
+          continue;
+        }
         final walked = _walkedCtime;
         _pending.removeWhere(
           (rpid, ctime) =>
               _floors.containsKey(rpid) ||
               (walked != null && ctime > walked + _ctimeSlack),
         );
-        if (_pending.isEmpty) break;
+        if (_pending.isEmpty || _end) break;
         if (!await _walkChunk()) break;
       }
     } catch (e) {
@@ -169,13 +193,97 @@ class ReplyFloorResolver extends ChangeNotifier {
     }
 
     for (var i = 0; i < n; i++) {
-      if (floors[i] case final floor?) _floors[rpids[i]] = floor;
+      if (floors[i] case final floor?) {
+        _floors[rpids[i]] = floor;
+        _samples.add((floor, chunk.ctimes[i]));
+      }
     }
+    _topFloor ??= floors[0];
     _cursor = chunk.lastFloor;
     _walkedCtime = chunk.ctimes.last;
     _end = chunk.isEnd;
-    if (!_disposed) notifyListeners();
+    _notify();
     return !_end;
+  }
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
+  /// Queries one comment below [cursor] and records its floor.
+  Future<FloorChunk?> _probe(int? cursor) async {
+    final res = await _query(cursor, 1);
+    if (res != null && res.rpids.isNotEmpty) {
+      _floors[res.rpids.first] = res.lastFloor;
+      _samples.add((res.lastFloor, res.ctimes.first));
+      if (cursor == null) _topFloor = res.lastFloor;
+    }
+    return res;
+  }
+
+  /// Finds the floor of comment [rpid] posted at [ctime] by a binary search
+  /// on post time. Shows nothing rather than a guess when it cannot be
+  /// confirmed by id.
+  Future<void> _search(int rpid, int ctime) async {
+    if (_topFloor == null) {
+      if (await _probe(null) == null) return;
+      if (_floors.containsKey(rpid)) {
+        _notify();
+        return;
+      }
+    }
+    final top = _topFloor;
+    if (top == null) return;
+
+    // smallest floor posted clearly after the comment: it is just below
+    final after = ctime + _timeJitter;
+    var lo = 0;
+    var hi = top + 1;
+    for (final (floor, time) in _samples) {
+      if (time > after) {
+        if (floor < hi) hi = floor;
+      } else if (floor + 1 > lo && time < ctime - _timeJitter) {
+        lo = floor + 1;
+      }
+    }
+    if (lo > hi) lo = hi;
+    while (lo < hi) {
+      final mid = (lo + hi) ~/ 2;
+      final res = await _probe(mid + 1);
+      if (res == null) return;
+      if (_floors.containsKey(rpid)) {
+        _notify();
+        return;
+      }
+      if (res.rpids.isEmpty) {
+        lo = mid + 1;
+      } else if (res.ctimes.first > after) {
+        hi = res.lastFloor;
+      } else {
+        lo = mid + 1;
+      }
+    }
+
+    // pick it out of the comments just below by id, then pin its floor
+    var cursor = lo;
+    for (var round = 0; round < 3; round++) {
+      final window = await _query(cursor, _chunkSize);
+      if (window == null || window.rpids.isEmpty) return;
+      final index = window.rpids.indexOf(rpid);
+      if (index != -1) {
+        final pinned = index == window.rpids.length - 1
+            ? window
+            : await _query(cursor, index + 1);
+        if (pinned != null && pinned.rpids.lastOrNull == rpid) {
+          _floors[rpid] = pinned.lastFloor;
+          _samples.add((pinned.lastFloor, ctime));
+          _notify();
+        }
+        return;
+      }
+      if (window.ctimes.last < ctime - _timeJitter) return; // passed it
+      cursor = window.lastFloor;
+    }
   }
 
   /// Fills `floors[lo..hi-1]`; `floors[hi]` is known and comment [lo] has a
@@ -213,6 +321,7 @@ class ReplyFloorResolver extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _pending.clear();
+    _searchPending.clear();
     super.dispose();
   }
 }

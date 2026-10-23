@@ -12,11 +12,15 @@ class ReplyFloorTag extends StatefulWidget {
     required this.resolver,
     required this.reply,
     required this.style,
+    this.search = false,
   });
 
   final ReplyFloorResolver resolver;
   final ReplyInfo reply;
   final TextStyle style;
+
+  /// Find the floor by search (hot or pinned replies).
+  final bool search;
 
   @override
   State<ReplyFloorTag> createState() => _ReplyFloorTagState();
@@ -41,6 +45,7 @@ class _ReplyFloorTagState extends State<ReplyFloorTag> {
   void _request() => widget.resolver.request(
     widget.reply.id.toInt(),
     widget.reply.ctime.toInt(),
+    search: widget.search,
   );
 
   @override

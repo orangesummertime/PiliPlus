@@ -1,3 +1,5 @@
+import 'dart:math' show ln2, log, max, min;
+
 import 'package:PiliPlus/common/widgets/colored_box_transition.dart';
 import 'package:PiliPlus/common/widgets/flutter/text_field/controller.dart';
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
@@ -145,8 +147,47 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
 
   bool get isClassic => sortType.value == ReplySortType.classic;
 
-  /// Hot replies shown before the "更多热门评论" button.
+  /// Upper bound of hot replies shown before "更多热门评论" (setting).
   late final int classicHotCount = Pref.classicHotReplyCount;
+
+  /// Hot replies shown for a comment area of [total] comments, at most
+  /// [cap]: none while everything fits on one page, then one more each time
+  /// the area doubles (1 from 20 comments, 2 from 40, 3 from 80, ...).
+  static int classicHotCountFor(int total, int cap) {
+    if (total < 20 || cap <= 0) return 0;
+    return min(cap, max(1, (log(total / 10) / ln2 + 1e-9).floor()));
+  }
+
+  /// Hot replies shown before "更多热门评论" in this area.
+  int get classicHotLimit => classicHotCountFor(count.value, classicHotCount);
+
+  /// Loaded hot replies worth showing: a reply nobody liked is not hot.
+  List<ReplyInfo> get classicHotCandidates =>
+      classicHot.where((e) => e.like > Int64.ZERO).toList();
+
+  /// Hot replies currently shown in the head (reads reactive state).
+  List<ReplyInfo> get classicHotShown {
+    if (!isClassic) return const [];
+    final limit = classicHotLimit;
+    if (limit == 0) return const [];
+    final hot = classicHotCandidates;
+    return classicHotExpanded.value ? hot : hot.take(limit).toList();
+  }
+
+  /// Indices of the by-time list to show in the classic layout, leaving out
+  /// replies already shown in the head; null shows the whole list.
+  List<int>? classicListIndices(List<ReplyInfo> list) {
+    if (!isClassic) return null;
+    final ids = {
+      for (final e in classicHotShown) e.id,
+      ?classicUpTop.value?.id,
+    };
+    if (ids.isEmpty) return null;
+    return [
+      for (var i = 0; i < list.length; i++)
+        if (!ids.contains(list[i].id)) i,
+    ];
+  }
 
   final classicHot = RxList<ReplyInfo>();
   final classicUpTop = Rxn<ReplyInfo>();
@@ -209,7 +250,7 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
   Future<void> onClassicHotMore() async {
     if (!classicHotExpanded.value) {
       classicHotExpanded.value = true;
-      if (classicHot.length > classicHotCount || classicHotEnd) {
+      if (classicHotCandidates.length > classicHotLimit || classicHotEnd) {
         return;
       }
     }

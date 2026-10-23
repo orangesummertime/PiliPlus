@@ -135,6 +135,8 @@ class _MainReplyPageState extends State<MainReplyPage>
   Widget _buildClassicItem(ReplyInfo item) => ReplyItemGrpc(
     replyItem: item,
     replyLevel: 1,
+    floorResolver: _controller.floorResolver,
+    floorBySearch: true,
     replyReply: throttleReplyReply,
     onReply: _controller.onReply,
     onDelete: _controller.onRemoveClassic,
@@ -154,14 +156,17 @@ class _MainReplyPageState extends State<MainReplyPage>
       colorScheme: colorScheme,
       buildItem: _buildClassicItem,
     );
+    // classic: replies shown in the head are left out below
+    final indices = _controller.classicListIndices(response);
+    final listLength = indices?.length ?? response.length;
     return SliverList.builder(
-      itemCount: response.length + 1 + head.length,
+      itemCount: listLength + 1 + head.length,
       itemBuilder: (context, index) {
         if (index < head.length) {
           return head[index];
         }
         index -= head.length;
-        if (index == response.length) {
+        if (index == listLength) {
           _controller.onLoadMore();
           return Container(
             alignment: Alignment.center,
@@ -176,6 +181,7 @@ class _MainReplyPageState extends State<MainReplyPage>
             ),
           );
         } else {
+          index = indices?[index] ?? index;
           return ReplyItemGrpc(
             replyItem: response[index],
             replyLevel: 1,

@@ -70,6 +70,7 @@ class ReplyItemGrpc extends StatelessWidget {
     required this.replyLevel,
     this.replyReply,
     this.floorResolver,
+    this.floorBySearch = false,
     this.needDivider = true,
     this.onReply,
     this.onDelete,
@@ -87,6 +88,10 @@ class ReplyItemGrpc extends StatelessWidget {
 
   /// Shows the floor (#N) of this top level comment when set.
   final ReplyFloorResolver? floorResolver;
+
+  /// The reply is not part of the list sorted by time (hot or pinned):
+  /// find its floor by search instead of walking down to it.
+  final bool floorBySearch;
   final bool needDivider;
   final ValueChanged<ReplyInfo>? onReply;
   final Function(ReplyInfo replyItem, int? subIndex)? onDelete;
@@ -255,10 +260,11 @@ class ReplyItemGrpc extends StatelessWidget {
                         ),
                       ),
                     if (floorResolver case final resolver?
-                        when !replyItem.replyControl.isUpTop)
+                        when floorBySearch || !replyItem.replyControl.isUpTop)
                       ReplyFloorTag(
                         resolver: resolver,
                         reply: replyItem,
+                        search: floorBySearch,
                         style: TextStyle(
                           fontSize: 11,
                           color: colorScheme.outline,

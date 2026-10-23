@@ -7,22 +7,36 @@ import 'package:flutter_test/flutter_test.dart';
 /// A comment area with the semantics of the web API (verified against
 /// bilibili): floors increase with time, deleted floors are skipped, and
 /// query(cursor, ps) returns the newest `ps` comments with floor < cursor.
+///
+/// Post times grow with the floor like on bilibili: some comments share a
+/// second, and neighbours are occasionally out of order by a second (seen
+/// on av10001: #553 posted a second before #552).
 class _Area {
-  _Area(int floors, {double deleted = 0, int seed = 1}) {
-    final rnd = Random(seed);
+  _Area(int floors, {double deleted = 0, int seed = 1}) : _rnd = Random(seed) {
     for (var f = 1; f <= floors; f++) {
-      if (rnd.nextDouble() >= deleted) _add(f);
+      if (_rnd.nextDouble() >= deleted) _add(f);
     }
   }
 
+  final Random _rnd;
   final floorOf = <int, int>{}; // rpid -> floor
+  final _ctime = <int, int>{}; // floor -> post time
   final _visible = <int>[]; // floors, ascending
+  var _clock = 1700000000;
+
+  int ctimeOf(int rpid) => _ctime[floorOf[rpid]!]!;
+
   int calls = 0;
   bool fail = false;
 
   void _add(int floor) {
+    // 0-30 s apart, a third of them in the same second
+    if (_rnd.nextDouble() > 0.33) _clock += _rnd.nextInt(30) + 1;
+    // occasionally a second out of order
+    final jitter = _rnd.nextDouble() < 0.05 ? -1 : 0;
     _visible.add(floor);
     floorOf[1000000 + floor] = floor;
+    _ctime[floor] = _clock + jitter;
   }
 
   int get top => _visible.last;
@@ -39,7 +53,7 @@ class _Area {
         .toList();
     return FloorChunk(
       rpids: [for (final f in below) 1000000 + f],
-      ctimes: [for (final f in below) 1700000000 + f * 60],
+      ctimes: [for (final f in below) _ctime[f]!],
       lastFloor: below.isEmpty ? 0 : below.last,
       isEnd: below.isEmpty || below.last == _visible.first,
     );
@@ -78,7 +92,7 @@ void main() {
       final r = _resolver(area);
       final shown = area.newest(60); // three pages scrolled
       for (final rpid in shown) {
-        r.request(rpid, 1700000000 + area.floorOf[rpid]! * 60);
+        r.request(rpid, area.ctimeOf(rpid));
       }
       await _settle(r);
       for (final rpid in shown) {
@@ -93,7 +107,7 @@ void main() {
     final area = _Area(500);
     final r = _resolver(area);
     for (final rpid in area.newest(60)) {
-      r.request(rpid, 1700000000 + area.floorOf[rpid]! * 60);
+      r.request(rpid, area.ctimeOf(rpid));
     }
     await _settle(r);
     expect(area.calls, 4);
@@ -103,7 +117,7 @@ void main() {
     final area = _Area(500, deleted: 0.2, seed: 3);
     final r = _resolver(area);
     final first = area.newest(1).first;
-    r.request(first, 1700000000 + area.floorOf[first]! * 60);
+    r.request(first, area.ctimeOf(first));
     await _settle(r);
     final calls = area.calls;
     expect(r.floorOf(first), area.floorOf[first]);
@@ -122,7 +136,7 @@ void main() {
       minInterval: Duration.zero,
     );
     for (final rpid in shown) {
-      r.request(rpid, 1700000000 + area.floorOf[rpid]! * 60);
+      r.request(rpid, area.ctimeOf(rpid));
     }
     await _settle(r);
     for (final rpid in shown) {
@@ -137,13 +151,63 @@ void main() {
     final r = _resolver(area);
     final newest = area.newest(20);
     for (final rpid in newest) {
-      r.request(rpid, 1700000000 + area.floorOf[rpid]! * 60);
+      r.request(rpid, area.ctimeOf(rpid));
     }
     // an unknown comment whose time is far newer than anything below
-    r.request(42, 1700000000 + area.top * 60 + 10000);
+    r.request(42, area.ctimeOf(area.newest(1).first) + 10000);
     await _settle(r);
     expect(r.floorOf(42), isNull);
     expect(area.calls, lessThan(20));
+  });
+
+  test('热评（不在按时间列表里）：二分查找，楼层号全部准确', () async {
+    for (final (deleted, seed) in [(0.0, 11), (0.15, 12), (0.4, 13)]) {
+      final area = _Area(20000, deleted: deleted, seed: seed);
+      final r = _resolver(area);
+      final rnd = Random(seed);
+      final rpids = area.floorOf.keys.toList();
+      final hot = [
+        for (var i = 0; i < 8; i++) rpids[rnd.nextInt(rpids.length)],
+      ];
+      for (final rpid in hot) {
+        r.request(rpid, area.ctimeOf(rpid), search: true);
+      }
+      await _settle(r);
+      for (final rpid in hot) {
+        expect(r.floorOf(rpid), area.floorOf[rpid], reason: 'rpid $rpid');
+      }
+      // ignore: avoid_print
+      print('删除 ${(deleted * 100).round()}%，2 万楼里查 8 条热评共 ${area.calls} 次请求');
+      expect(area.calls / hot.length, lessThan(25));
+    }
+  });
+
+  test('查不到的评论不显示楼层号，请求次数有上限', () async {
+    final area = _Area(5000, seed: 21);
+    final r = _resolver(area);
+    final some = area.newest(3000).last;
+    r.request(424242, area.ctimeOf(some), search: true); // not in the area
+    await _settle(r);
+    expect(r.floorOf(424242), isNull);
+    expect(area.calls, lessThan(25));
+  });
+
+  test('热评和按时间列表同时进行', () async {
+    final area = _Area(3000, deleted: 0.15, seed: 31);
+    final r = _resolver(area);
+    final rpids = area.floorOf.keys.toList();
+    final hot = [rpids[100], rpids[1500]];
+    final latest = area.newest(40);
+    for (final rpid in hot) {
+      r.request(rpid, area.ctimeOf(rpid), search: true);
+    }
+    for (final rpid in latest) {
+      r.request(rpid, area.ctimeOf(rpid));
+    }
+    await _settle(r);
+    for (final rpid in [...hot, ...latest]) {
+      expect(r.floorOf(rpid), area.floorOf[rpid]);
+    }
   });
 
   test('请求失败后停止，不会反复重试', () async {

@@ -5,7 +5,9 @@ import 'package:material_ui/material_ui.dart';
 
 /// Leading items of the top level comment list in the classic (经典) layout:
 /// the pinned reply and a few hot replies with a "更多热门评论" button; the
-/// list itself continues with the replies sorted by time.
+/// list itself continues with the replies sorted by time, without the ones
+/// shown here (see [ReplyController.classicListIndices]). Small comment
+/// areas show no hot replies at all.
 ///
 /// Reads the controller's reactive state, so call it inside the `Obx` that
 /// builds the list. Returns nothing outside the classic layout.
@@ -17,11 +19,13 @@ List<Widget> buildClassicReplyHead({
   if (!controller.isClassic) return const [];
 
   final upTop = controller.classicUpTop.value;
-  final hot = controller.classicHot.toList();
+  final limit = controller.classicHotLimit;
+  final hot = limit == 0
+      ? const <ReplyInfo>[]
+      : controller.classicHotCandidates;
+  final shown = controller.classicHotShown;
   final expanded = controller.classicHotExpanded.value;
   final loading = controller.classicHotLoading.value;
-  final limit = controller.classicHotCount;
-  final shown = expanded ? hot : hot.take(limit);
 
   final canExpand =
       !expanded && (hot.length > limit || !controller.classicHotEnd);
@@ -29,7 +33,7 @@ List<Widget> buildClassicReplyHead({
 
   return [
     if (upTop != null) buildItem(upTop),
-    if (hot.isNotEmpty) ...[
+    if (shown.isNotEmpty) ...[
       ...shown.map(buildItem),
       if (canExpand || canLoadMore || expanded)
         _MoreButtons(

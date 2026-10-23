@@ -10,23 +10,34 @@ import 'package:fixnum/fixnum.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 
-ReplyInfo _reply(int id) => ReplyInfo(id: Int64(id));
+/// Hot replies (100+) are liked, except 104 which nobody liked.
+ReplyInfo _reply(int id) =>
+    ReplyInfo(id: Int64(id), like: Int64(id > 100 && id != 104 ? 50 : 0));
 
 MainListReply _page(
   List<int> ids, {
   required int next,
   bool end = false,
   int? upTop,
+  int total = 100,
 }) => MainListReply(
   replies: ids.map(_reply),
   cursor: CursorReply(next: Int64(next), isEnd: end),
   upTop: upTop == null ? null : _reply(upTop),
-  subjectControl: SubjectControl(count: Int64(100)),
+  subjectControl: SubjectControl(count: Int64(total)),
 );
 
 /// Serves fake pages: hot ids are 100+, time ids are 1..; cursor = page index.
 class _Controller extends ReplyController<MainListReply> {
+  _Controller({this.total = 100, this.firstTimePage});
+
   final requests = <String>[];
+
+  /// Total comments of the area (subject count).
+  final int total;
+
+  /// Replaces the first page sorted by time.
+  final List<int>? firstTimePage;
 
   @override
   dynamic get sourceId => 1;
@@ -42,10 +53,13 @@ class _Controller extends ReplyController<MainListReply> {
     final base = (hot ? 100 : 0) + page * 10;
     return Success(
       _page(
-        [for (var i = 1; i <= 10; i++) base + i],
+        !hot && page == 0 && firstTimePage != null
+            ? firstTimePage!
+            : [for (var i = 1; i <= 10; i++) base + i],
         next: page + 1,
         end: hot && page == 1,
         upTop: 999,
+        total: total,
       ),
     );
   }
@@ -69,9 +83,13 @@ void main() {
     await dir.delete(recursive: true);
   });
 
-  _Controller create(ReplySortType sort) {
+  _Controller create(
+    ReplySortType sort, {
+    int total = 100,
+    List<int>? firstTimePage,
+  }) {
     GStorage.setting.put(SettingBoxKey.replySortType, sort.index);
-    return _Controller()..onInit();
+    return _Controller(total: total, firstTimePage: firstTimePage)..onInit();
   }
 
   test('经典：热评来自最热接口，列表按时间，置顶在头部', () async {
@@ -142,5 +160,53 @@ void main() {
     expect(c.classicHot.contains(hot), isFalse);
     c.onRemoveClassic(c.classicUpTop.value!, null);
     expect(c.classicUpTop.value, isNull);
+  });
+
+  test('热评条数随评论数增长，设置值为上限，评论太少不显示', () {
+    const f = ReplyController.classicHotCountFor;
+    expect(f(10, 3), 0);
+    expect(f(19, 3), 0, reason: 'fits on one page');
+    expect(f(20, 3), 1);
+    expect(f(39, 3), 1);
+    expect(f(40, 3), 2);
+    expect(f(80, 3), 3);
+    expect(f(5000, 3), 3, reason: 'capped by the setting');
+    expect(f(160, 10), 4);
+    expect(f(10240, 10), 10);
+    expect(f(10240, 20), 10);
+  });
+
+  test('评论太少：经典模式直接按时间倒序，没有热评', () async {
+    final c = create(ReplySortType.classic, total: 15);
+    await c.queryData();
+    expect(c.classicHotLimit, 0);
+    expect(c.classicHotShown, isEmpty);
+    expect(c.classicListIndices(c.loadingState.value.data!)?.length, 10);
+  });
+
+  test('没人点赞的不算热评', () async {
+    final c = create(ReplySortType.classic);
+    await c.queryData();
+    expect(_ids(c.classicHotShown), [101, 102, 103]);
+    c.classicHotExpanded.value = true;
+    expect(_ids(c.classicHotShown).contains(104), isFalse);
+  });
+
+  test('去重：热评区显示的评论不再出现在下面按时间的列表里', () async {
+    final c = create(
+      ReplySortType.classic,
+      firstTimePage: [1, 101, 2, 105, 3],
+    );
+    await c.queryData();
+    final list = c.loadingState.value.data!;
+    List<int> visible() => [
+      for (final i in c.classicListIndices(list)!) list[i].id.toInt(),
+    ];
+
+    expect(visible(), [1, 2, 105, 3], reason: '101 is shown above');
+    c.classicHotExpanded.value = true;
+    expect(visible(), [1, 2, 3], reason: '105 is shown above once expanded');
+    c.onClassicHotCollapse();
+    expect(visible(), [1, 2, 105, 3]);
   });
 }

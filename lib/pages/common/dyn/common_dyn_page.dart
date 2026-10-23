@@ -188,7 +188,10 @@ mixin CommonDynPageMixin<T extends StatefulWidget>
             colorScheme: theme.colorScheme,
             buildItem: (item) => buildClassicReply(context, item),
           );
-          var count = response.length + 1 + head.length;
+          // classic: replies shown in the head are left out below
+          final indices = controller.classicListIndices(response);
+          final listLength = indices?.length ?? response.length;
+          var count = listLength + 1 + head.length;
           final voteCard = controller.voteCard;
           final hasVote = voteCard != null;
           if (hasVote) {
@@ -209,7 +212,7 @@ mixin CommonDynPageMixin<T extends StatefulWidget>
                 return head[index];
               }
               index -= head.length;
-              if (index == response.length) {
+              if (index == listLength) {
                 controller.onLoadMore();
                 return Container(
                   alignment: Alignment.center,
@@ -224,6 +227,7 @@ mixin CommonDynPageMixin<T extends StatefulWidget>
                   ),
                 );
               } else {
+                index = indices?[index] ?? index;
                 return buildReply(context, index, response[index]);
               }
             },
@@ -278,6 +282,8 @@ mixin CommonDynPageMixin<T extends StatefulWidget>
     return ReplyItemGrpc(
       replyItem: item,
       replyLevel: 1,
+      floorResolver: controller.floorResolver,
+      floorBySearch: true,
       replyReply: (item, id) => throttleReplyReply(context, item, id),
       onReply: controller.onReply,
       onDelete: controller.onRemoveClassic,
