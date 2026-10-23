@@ -4,8 +4,8 @@ import 'package:PiliPlus/pages/common/reply_controller.dart';
 import 'package:material_ui/material_ui.dart';
 
 /// Leading items of the top level comment list in the classic (经典) layout:
-/// the pinned reply, a few hot replies with a "更多热门评论" button, then the
-/// header of the replies sorted by time, which the list itself continues.
+/// the pinned reply and a few hot replies with a "更多热门评论" button; the
+/// list itself continues with the replies sorted by time.
 ///
 /// Reads the controller's reactive state, so call it inside the `Obx` that
 /// builds the list. Returns nothing outside the classic layout.
@@ -30,7 +30,6 @@ List<Widget> buildClassicReplyHead({
   return [
     if (upTop != null) buildItem(upTop),
     if (hot.isNotEmpty) ...[
-      _SectionTitle(title: '热门评论', colorScheme: colorScheme),
       ...shown.map(buildItem),
       if (canExpand || canLoadMore || expanded)
         _MoreButtons(
@@ -48,43 +47,7 @@ List<Widget> buildClassicReplyHead({
               : null,
         ),
     ],
-    _SectionTitle(title: '最新评论', colorScheme: colorScheme),
   ];
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.title, required this.colorScheme});
-
-  final String title;
-  final ColorScheme colorScheme;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const .fromLTRB(12, 12, 12, 4),
-      child: Row(
-        spacing: 6,
-        children: [
-          Container(
-            width: 3,
-            height: 14,
-            decoration: BoxDecoration(
-              color: colorScheme.primary,
-              borderRadius: const .all(.circular(2)),
-            ),
-          ),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: colorScheme.onSurface,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _MoreButtons extends StatelessWidget {
