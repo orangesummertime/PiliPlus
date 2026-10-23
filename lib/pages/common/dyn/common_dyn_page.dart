@@ -11,6 +11,7 @@ import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo;
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/models/common/enum_with_label.dart';
+import 'package:PiliPlus/pages/common/reply/classic_reply_head.dart';
 import 'package:PiliPlus/pages/article/widgets/sliver_list.dart';
 import 'package:PiliPlus/pages/common/dyn/common_dyn_controller.dart';
 import 'package:PiliPlus/pages/common/fab_mixin.dart';
@@ -182,7 +183,15 @@ mixin CommonDynPageMixin<T extends StatefulWidget>
         );
       case Success(:final response):
         if (response != null && response.isNotEmpty) {
-          var count = response.length + 1;
+          final head = buildClassicReplyHead(
+            controller: controller,
+            colorScheme: theme.colorScheme,
+            buildItem: (item) => buildClassicReply(context, item),
+          );
+          // classic: replies shown in the head are left out below
+          final indices = controller.classicListIndices(response);
+          final listLength = indices?.length ?? response.length;
+          var count = listLength + 1 + head.length;
           final voteCard = controller.voteCard;
           final hasVote = voteCard != null;
           if (hasVote) {
@@ -199,7 +208,11 @@ mixin CommonDynPageMixin<T extends StatefulWidget>
                   index--;
                 }
               }
-              if (index == response.length) {
+              if (index < head.length) {
+                return head[index];
+              }
+              index -= head.length;
+              if (index == listLength) {
                 controller.onLoadMore();
                 return Container(
                   alignment: Alignment.center,
@@ -214,6 +227,7 @@ mixin CommonDynPageMixin<T extends StatefulWidget>
                   ),
                 );
               } else {
+                index = indices?[index] ?? index;
                 return buildReply(context, index, response[index]);
               }
             },
@@ -256,6 +270,26 @@ mixin CommonDynPageMixin<T extends StatefulWidget>
       onToggleTop: (item) => controller.onToggleTop(
         item,
         index,
+        controller.oid,
+        controller.replyType,
+      ),
+    );
+  }
+
+  /// A pinned or hot reply in the classic head.
+  Widget buildClassicReply(BuildContext context, ReplyInfo item) {
+    return ReplyItemGrpc(
+      replyItem: item,
+      replyLevel: 1,
+      replyReply: (item, id) => throttleReplyReply(context, item, id),
+      onReply: controller.onReply,
+      onDelete: controller.onRemoveClassic,
+      upMid: controller.upMid,
+      onViewImage: hideFab,
+      onCheckReply: controller.onCheckReply,
+      onToggleTop: (item) => controller.onToggleTop(
+        item,
+        -1,
         controller.oid,
         controller.replyType,
       ),
