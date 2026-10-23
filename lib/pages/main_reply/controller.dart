@@ -13,6 +13,12 @@ class MainReplyController extends ReplyController<MainListReply> {
   int get sourceId => oid;
 
   @override
+  int? get floorOid => oid;
+
+  @override
+  int? get floorType => replyType;
+
+  @override
   void onInit() {
     super.onInit();
     final args = Get.arguments;
