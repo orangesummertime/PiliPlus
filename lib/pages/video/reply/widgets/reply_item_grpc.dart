@@ -236,41 +236,39 @@ class ReplyItemGrpc extends StatelessWidget {
                       ),
                   ],
                 ),
-                Row(
-                  mainAxisSize: .min,
-                  children: [
-                    Text(
-                      replyLevel == 0
-                          ? DateFormatUtils.format(
-                              replyItem.ctime.toInt(),
-                              format: DateFormatUtils.longFormatDs,
-                            )
-                          : DateFormatUtils.dateFormat(replyItem.ctime.toInt()),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colorScheme.outline,
-                      ),
-                    ),
-                    if (replyItem.replyControl.hasLocation())
-                      Text(
-                        ' • ${replyItem.replyControl.location}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: colorScheme.outline,
+                Text.rich(
+                  maxLines: 1,
+                  overflow: .ellipsis,
+                  style: TextStyle(fontSize: 11, color: colorScheme.outline),
+                  TextSpan(
+                    text: replyLevel == 0
+                        ? DateFormatUtils.format(
+                            replyItem.ctime.toInt(),
+                            format: DateFormatUtils.longFormatDs,
+                          )
+                        : DateFormatUtils.dateFormat(replyItem.ctime.toInt()),
+                    children: [
+                      if (replyItem.replyControl.hasLocation())
+                        TextSpan(
+                          text: ' • ${replyItem.replyControl.location}',
                         ),
-                      ),
-                    if (floorResolver case final resolver?
-                        when floorBySearch || !replyItem.replyControl.isUpTop)
-                      ReplyFloorTag(
-                        resolver: resolver,
-                        reply: replyItem,
-                        search: floorBySearch,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: colorScheme.outline,
+                      if (floorResolver case final resolver?
+                          when floorBySearch || !replyItem.replyControl.isUpTop)
+                        WidgetSpan(
+                          alignment: .baseline,
+                          baseline: .alphabetic,
+                          child: ReplyFloorTag(
+                            resolver: resolver,
+                            reply: replyItem,
+                            search: floorBySearch,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: colorScheme.outline,
+                            ),
+                          ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
