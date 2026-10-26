@@ -255,6 +255,8 @@ flutter_native_splash:
   image_dark: assets/images/logo/logo_2.png
 
 flutter:
+  config:
+    enable-swift-package-manager: false
   uses-material-design: true
 
   assets:

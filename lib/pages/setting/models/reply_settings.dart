@@ -122,16 +122,36 @@ List<SettingsModel> get replySettings => [
     title: '评论展示',
     leading: const Icon(Icons.whatshot_outlined),
     value: () => Pref.replySortType,
-    items: ReplySortType.values.take(2),
+    items: ReplySortType.mainList,
     onSelected: (value, setState) => GStorage.setting
         .put(SettingBoxKey.replySortType, value.index)
         .whenComplete(setState),
+  ),
+  NormalModel(
+    title: '经典模式热评数量上限',
+    subtitle: '「经典」展示时，按时间排序的评论前最多展示的热门评论数；实际数量随评论数增加（20 条起 1 条，之后评论数每翻一倍多 1 条），不足 20 条时不展示热评',
+    leading: const Icon(Icons.local_fire_department_outlined),
+    getTrailing: (theme) => Text(
+      '${Pref.classicHotReplyCount}条',
+      style: theme.textTheme.titleSmall,
+    ),
+    onTap: _showClassicHotCountDialog,
+  ),
+  const SwitchModel(
+    title: '显示评论楼层号',
+    subtitle:
+        '按时间排序的一级评论（「最新」及「经典」的最新评论部分）显示 #楼层号。'
+        '楼层号需额外请求逐条确认，有延迟：会在评论加载后几秒内陆续出现，'
+        '评论越多、被删评论越多越慢，并会增加流量',
+    leading: Icon(Icons.tag),
+    setKey: SettingBoxKey.showReplyFloor,
+    defaultVal: false,
   ),
   PopupModel(
     title: '楼中楼评论展示',
     leading: const Icon(Icons.subdirectory_arrow_right_outlined),
     value: () => Pref.reply2SortType,
-    items: ReplySortType.values.take(2),
+    items: ReplySortType.thread,
     onSelected: (value, setState) => GStorage.setting
         .put(SettingBoxKey.reply2SortType, value.index)
         .whenComplete(setState),
@@ -167,6 +187,53 @@ void _showReplyLengthDialog(BuildContext context, VoidCallback setState) {
               Get.back();
               ReplyItemGrpc.replyLengthLimit = val == 0 ? null : val;
               await GStorage.setting.put(SettingBoxKey.replyLengthLimit, val);
+              setState();
+            } catch (e) {
+              SmartDialog.showToast(e.toString());
+            }
+          },
+          child: const Text('确定'),
+        ),
+      ],
+    ),
+  );
+}
+
+void _showClassicHotCountDialog(BuildContext context, VoidCallback setState) {
+  String count = Pref.classicHotReplyCount.toString();
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('经典模式热评数量上限'),
+      content: TextFormField(
+        autofocus: true,
+        initialValue: count,
+        keyboardType: TextInputType.number,
+        onChanged: (value) => count = value,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: const InputDecoration(suffixText: '条'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: Get.back,
+          child: Text(
+            '取消',
+            style: TextStyle(color: ColorScheme.of(context).outline),
+          ),
+        ),
+        TextButton(
+          onPressed: () async {
+            try {
+              final val = int.parse(count);
+              if (val < 1 || val > 20) {
+                SmartDialog.showToast('请输入 1-20');
+                return;
+              }
+              Get.back();
+              await GStorage.setting.put(
+                SettingBoxKey.classicHotReplyCount,
+                val,
+              );
               setState();
             } catch (e) {
               SmartDialog.showToast(e.toString());

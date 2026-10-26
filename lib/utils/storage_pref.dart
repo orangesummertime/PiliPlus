@@ -404,6 +404,13 @@ abstract final class Pref {
     defaultValue: horizontalScreen,
   );
 
+  /// Hot replies shown before the "更多热门评论" button in the classic layout.
+  static int get classicHotReplyCount =>
+      _setting.get(SettingBoxKey.classicHotReplyCount, defaultValue: 3);
+
+  static bool get showReplyFloor =>
+      _setting.get(SettingBoxKey.showReplyFloor, defaultValue: false);
+
   static int? get replyLengthLimit {
     int length = _setting.get(SettingBoxKey.replyLengthLimit, defaultValue: 6);
     if (length <= 0) {
@@ -771,6 +778,9 @@ abstract final class Pref {
         SettingBoxKey.pageTransition,
         defaultValue: Transition.native.index,
       )];
+
+  static bool get endEdgeBackGesture =>
+      _setting.get(SettingBoxKey.endEdgeBackGesture, defaultValue: false);
 
   static bool get enableQuickDouble =>
       _setting.get(SettingBoxKey.enableQuickDouble, defaultValue: true);

@@ -24,6 +24,10 @@ mixin CommonSlideMixin<T extends CommonSlidePage> on State<T>, TickerProvider {
 
   static bool slideDismissReplyPage = Pref.slideDismissReplyPage;
 
+  /// The right edge belongs to the right edge back gesture (iOS setting),
+  /// which lowers and closes the panel the same way.
+  static bool rightEdgeTaken = false;
+
   bool isDxAllowed(double dx) {
     return enableSlide
         ? dx > CommonSlideMixin.offset &&
@@ -48,7 +52,7 @@ mixin CommonSlideMixin<T extends CommonSlidePage> on State<T>, TickerProvider {
           SlideDragGestureRecognizer(
               isDxAllowed: (double dx) {
                 final isLTR = dx <= offset;
-                final isRTL = dx >= _maxWidth - offset;
+                final isRTL = !rightEdgeTaken && dx >= _maxWidth - offset;
                 if (isLTR || isRTL) {
                   _isRTL = isRTL;
                   return true;

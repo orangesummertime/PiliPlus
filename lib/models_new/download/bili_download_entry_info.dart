@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:PiliPlus/common/widgets/badge.dart';
 import 'package:PiliPlus/models/common/video/video_quality.dart';
 import 'package:PiliPlus/models/common/video/video_type.dart';
@@ -6,6 +8,7 @@ import 'package:PiliPlus/models_new/sponsor_block/segment_item.dart';
 import 'package:PiliPlus/pages/common/multi_select/base.dart'
     show MultiSelectData;
 import 'package:PiliPlus/utils/page_utils.dart';
+import 'package:PiliPlus/utils/ios/ios_cached_video_exporter.dart';
 import 'package:PiliPlus/utils/path_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:PiliPlus/utils/utils.dart';
@@ -103,6 +106,12 @@ class BiliDownloadEntryInfo with MultiSelectData {
         size: 18,
       ),
       itemBuilder: (_) => [
+        if (Platform.isIOS)
+          PopupMenuItem(
+            height: 38,
+            onTap: () => IosCachedVideoExporter.export(this),
+            child: const Text('导出视频', style: TextStyle(fontSize: 13)),
+          ),
         PopupMenuItem(
           height: 38,
           child: const Text('查看详情页', style: TextStyle(fontSize: 13)),

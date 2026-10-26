@@ -30,6 +30,12 @@ abstract class CommonDynController extends ReplyController<MainListReply>
   int get oid;
   int get replyType;
 
+  @override
+  int? get floorOid => oid;
+
+  @override
+  int? get floorType => replyType;
+
   MentionItem? get mentionItem => null;
 
   late final RxBool showTitle = false.obs;
