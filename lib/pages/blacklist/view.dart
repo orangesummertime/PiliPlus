@@ -7,7 +7,6 @@ import 'package:PiliPlus/common/widgets/image/network_img_layer.dart';
 import 'package:PiliPlus/common/widgets/loading_widget/http_error.dart';
 import 'package:PiliPlus/common/widgets/scaffold/simple_scaffold.dart';
 import 'package:PiliPlus/common/widgets/scroll_physics.dart';
-import 'package:PiliPlus/common/widgets/sliver_wrap.dart';
 import 'package:PiliPlus/common/widgets/view_sliver_safe_area.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/models/common/enum_with_label.dart';
@@ -15,7 +14,6 @@ import 'package:PiliPlus/models/common/image_type.dart';
 import 'package:PiliPlus/models_new/blacklist/list.dart';
 import 'package:PiliPlus/pages/blacklist/controller.dart';
 import 'package:PiliPlus/pages/blacklist/rule_sheet.dart';
-import 'package:PiliPlus/pages/search/widgets/search_text.dart';
 import 'package:PiliPlus/utils/black_mid_reasons.dart';
 import 'package:PiliPlus/utils/date_utils.dart';
 import 'package:PiliPlus/utils/utils.dart';
@@ -221,53 +219,161 @@ class _BlackListPageState extends State<BlackListPage>
         slivers: [
           ViewSliverSafeArea(
             bottom: 180,
-            sliver: SliverPadding(
-              padding: const .fromLTRB(12, 12, 12, 0),
-              sliver: SliverFixedWrap(
-                spacing: 8,
-                runSpacing: 8,
-                mainAxisExtent: 30,
-                delegate: SliverChildBuilderDelegate(
-                  addAutomaticKeepAlives: false,
-                  addRepaintBoundaries: false,
-                  childCount: _blackListController.blackMids.length,
-                  (context, index) {
-                    final mid = _blackListController.blackMids.elementAt(index);
-                    return SearchText(
-                      text: mid.toString(),
-                      onTap: (mid) => Get.toNamed('/member?mid=$mid'),
-                      onLongPress: (_) {
-                        final reason = BlackMidReasons.of(mid);
-                        showConfirmDialog(
-                          context: context,
-                          title: const Text('确定移除该用户？'),
-                          content: reason == null
-                              ? null
-                              : Text(
-                                  reason.url == null
-                                      ? '原因：${reason.reason}'
-                                      : '原因：${reason.reason}\n来源：${reason.url}',
-                                ),
-                          onConfirm: () {
-                            _blackListController.blackMids.remove(mid);
-                            BlackMidReasons.setLocal(mid, null);
-                            setState(() {});
-                          },
-                        );
-                      },
-                      height: 1,
-                      maxLines: 1,
-                      fontSize: 14,
-                      overflow: .ellipsis,
-                      padding: const .fromLTRB(11, 8, 11, 0),
-                    );
-                  },
+            sliver: _buildLocalList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Newest first. A snapshot list, so rows are looked up by index in O(1)
+  /// (`Set.elementAt` walks the set).
+  Widget _buildLocalList() {
+    final mids = _blackListController.blackMids.toList(growable: false);
+    final theme = Theme.of(context);
+    final outline = theme.colorScheme.outline;
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const .fromLTRB(16, 12, 16, 4),
+            child: Text(
+              '共 ${mids.length} 个 · 最近添加的在前',
+              style: TextStyle(fontSize: 13, color: outline),
+            ),
+          ),
+        ),
+        SliverFixedExtentList.builder(
+          itemExtent: 56,
+          itemCount: mids.length,
+          itemBuilder: (context, index) {
+            final mid = mids[mids.length - 1 - index];
+            final reason = BlackMidReasons.of(mid);
+            return InkWell(
+              onTap: () => Get.toNamed('/member?mid=$mid'),
+              onLongPress: () => _showLocalMidDialog(mid),
+              child: Padding(
+                padding: const .symmetric(horizontal: 16),
+                child: Row(
+                  spacing: 12,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: .center,
+                        crossAxisAlignment: .start,
+                        children: [
+                          Text(
+                            mid.toString(),
+                            maxLines: 1,
+                            style: const TextStyle(fontSize: 15),
+                          ),
+                          if (reason != null)
+                            Text(
+                              reason.reason,
+                              maxLines: 1,
+                              overflow: .ellipsis,
+                              style: TextStyle(fontSize: 13, color: outline),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (reason?.url != null)
+                      Text(
+                        '规则',
+                        style: TextStyle(fontSize: 12, color: outline),
+                      ),
+                  ],
                 ),
               ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  void _showLocalMidDialog(int mid) {
+    final reason = BlackMidReasons.of(mid);
+    final theme = Theme.of(context);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('$mid'),
+        content: Column(
+          mainAxisSize: .min,
+          crossAxisAlignment: .start,
+          spacing: 8,
+          children: [
+            if (reason == null)
+              Text('未填写原因', style: TextStyle(color: theme.colorScheme.outline))
+            else ...[
+              SelectableText('原因：${reason.reason}'),
+              Text(
+                reason.url == null ? '来源：本地添加' : '来源：在线规则 ${reason.url}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Get.back();
+              _showEditReasonDialog(mid);
+            },
+            child: Text(BlackMidReasons.local(mid) == null ? '写原因' : '改原因'),
+          ),
+          TextButton(
+            onPressed: () {
+              Get.back();
+              _blackListController.blackMids.remove(mid);
+              BlackMidReasons.setLocal(mid, null);
+              setState(() {});
+            },
+            child: Text(
+              '移除',
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
+          ),
+          TextButton(
+            onPressed: Get.back,
+            child: Text(
+              '取消',
+              style: TextStyle(color: theme.colorScheme.outline),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  void _showEditReasonDialog(int mid) {
+    var reason = BlackMidReasons.local(mid) ?? '';
+    void save() {
+      BlackMidReasons.setLocal(mid, reason);
+      setState(() {});
+    }
+
+    showConfirmDialog(
+      context: context,
+      title: Text('$mid 的拉黑原因'),
+      content: TextFormField(
+        autofocus: true,
+        initialValue: reason,
+        textInputAction: .done,
+        onChanged: (value) => reason = value,
+        onFieldSubmitted: (_) {
+          Get.back();
+          save();
+        },
+        decoration: const InputDecoration(
+          hintText: '留空则清除（规则里的原因不受影响）',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      onConfirm: save,
     );
   }
 
