@@ -18,6 +18,7 @@ import 'package:PiliPlus/common/widgets/translucent_row.dart';
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo, ReplyControl, Content, Url, ReplyControl_VoteOption, Emote;
 import 'package:PiliPlus/grpc/reply.dart';
+import 'package:PiliPlus/pages/common/reply/black_mid_badge.dart';
 import 'package:PiliPlus/pages/common/reply/reply_floor_tag.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/http/reply.dart';
@@ -203,12 +204,7 @@ class ReplyItemGrpc extends StatelessWidget {
                     ),
                     if (replyItem.replyControl.blocked ||
                         GlobalData().blackMids.contains(replyItem.mid.toInt()))
-                      const PBadge(
-                        text: '已拉黑',
-                        size: .small,
-                        isStack: false,
-                        fontSize: 9,
-                      ),
+                      BlackMidBadge(mid: replyItem.mid.toInt()),
                     BiliUtils.levelPicture(
                       member.level.toInt(),
                       isSeniorMember: member.isSeniorMember == 1,

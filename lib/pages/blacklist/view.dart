@@ -16,6 +16,7 @@ import 'package:PiliPlus/models_new/blacklist/list.dart';
 import 'package:PiliPlus/pages/blacklist/controller.dart';
 import 'package:PiliPlus/pages/blacklist/rule_sheet.dart';
 import 'package:PiliPlus/pages/search/widgets/search_text.dart';
+import 'package:PiliPlus/utils/black_mid_reasons.dart';
 import 'package:PiliPlus/utils/date_utils.dart';
 import 'package:PiliPlus/utils/utils.dart';
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
@@ -113,7 +114,7 @@ class _BlackListPageState extends State<BlackListPage>
     );
   }
 
-  void _onAddMid(String mid) {
+  void _onAddMid(String mid, String reason) {
     if (mid.isEmpty) return;
     int intMid;
     try {
@@ -123,31 +124,47 @@ class _BlackListPageState extends State<BlackListPage>
       return;
     }
     _blackListController.blackMids.add(intMid);
+    BlackMidReasons.setLocal(intMid, reason);
     SmartDialog.showToast('屏蔽成功');
     setState(() {});
   }
 
   void _showAddMidDialog() {
     var text = '';
+    var reason = '';
     showConfirmDialog(
       context: context,
       title: const Text('屏蔽用户'),
-      content: TextField(
-        autofocus: true,
-        textInputAction: .done,
-        keyboardType: .number,
-        onChanged: (value) => text = value,
-        onSubmitted: (value) {
-          Get.back();
-          _onAddMid(value);
-        },
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        decoration: const InputDecoration(
-          labelText: 'UID',
-          border: OutlineInputBorder(),
-        ),
+      content: Column(
+        mainAxisSize: .min,
+        spacing: 16,
+        children: [
+          TextField(
+            autofocus: true,
+            textInputAction: .next,
+            keyboardType: .number,
+            onChanged: (value) => text = value,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: const InputDecoration(
+              labelText: 'UID',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          TextField(
+            textInputAction: .done,
+            onChanged: (value) => reason = value,
+            onSubmitted: (_) {
+              Get.back();
+              _onAddMid(text, reason);
+            },
+            decoration: const InputDecoration(
+              labelText: '原因（可选）',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
       ),
-      onConfirm: () => _onAddMid(text),
+      onConfirm: () => _onAddMid(text, reason),
     );
   }
 
@@ -219,14 +236,25 @@ class _BlackListPageState extends State<BlackListPage>
                     return SearchText(
                       text: mid.toString(),
                       onTap: (mid) => Get.toNamed('/member?mid=$mid'),
-                      onLongPress: (_) => showConfirmDialog(
-                        context: context,
-                        title: const Text('确定移除该用户？'),
-                        onConfirm: () {
-                          _blackListController.blackMids.remove(mid);
-                          setState(() {});
-                        },
-                      ),
+                      onLongPress: (_) {
+                        final reason = BlackMidReasons.of(mid);
+                        showConfirmDialog(
+                          context: context,
+                          title: const Text('确定移除该用户？'),
+                          content: reason == null
+                              ? null
+                              : Text(
+                                  reason.url == null
+                                      ? '原因：${reason.reason}'
+                                      : '原因：${reason.reason}\n来源：${reason.url}',
+                                ),
+                          onConfirm: () {
+                            _blackListController.blackMids.remove(mid);
+                            BlackMidReasons.setLocal(mid, null);
+                            setState(() {});
+                          },
+                        );
+                      },
                       height: 1,
                       maxLines: 1,
                       fontSize: 14,
@@ -293,6 +321,9 @@ class _BlackListPageState extends State<BlackListPage>
                           item.mid,
                         );
                         if (mounted && removed) {
+                          if (item.mid case final mid?) {
+                            BlackMidReasons.setLocal(mid, null);
+                          }
                           if (_blackListController.blackMids.remove(item.mid)) {
                             setState(() {});
                           }

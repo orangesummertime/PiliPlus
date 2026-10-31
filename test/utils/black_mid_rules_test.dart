@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:PiliPlus/utils/black_mid_rules.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -34,6 +36,60 @@ void main() {
         BlackMidRules.parse('abc\n12a\n0\n99999999999999999999\n42'),
         {42},
       );
+    });
+  });
+
+  group('BlackMidRules.parseWithReasons', () {
+    test('行内 # 后面是原因，# 前不必有空格', () {
+      final r = BlackMidRules.parseWithReasons(
+        '123456 #广告号\n'
+        '234567#刷屏\n'
+        '345678 # 引战 带数字 999\n'
+        '456789 // 另一种注释\n'
+        '567890\n',
+      );
+      expect(r.mids, {123456, 234567, 345678, 456789, 567890});
+      expect(r.reasons, {
+        123456: '广告号',
+        234567: '刷屏',
+        345678: '引战 带数字 999',
+        456789: '另一种注释',
+      });
+    });
+
+    test('整行注释和空原因不算原因；同一行的多个 UID 共用原因', () {
+      final r = BlackMidRules.parseWithReasons(
+        '# 1111 标题\n'
+        '1 2,3 # 同一批\n'
+        '4 #\n'
+        'https://space.bilibili.com/5?spm_id_from=x #链接也行\n',
+      );
+      expect(r.mids, {1, 2, 3, 4, 5});
+      expect(r.reasons, {1: '同一批', 2: '同一批', 3: '同一批', 5: '链接也行'});
+    });
+
+    test('同一 UID 出现多次时保留第一个原因', () {
+      final r = BlackMidRules.parseWithReasons('7 #先\n7 #后\n');
+      expect(r.reasons, {7: '先'});
+    });
+
+    test('原因随规则一起保存和读取', () {
+      final rule = BlackMidRule(url: 'a', mids: [1, 2], reasons: {1: '原因'});
+      final back = BlackMidRule.fromJson(
+        Map<String, dynamic>.from(
+          jsonDecode(jsonEncode(rule.toJson())) as Map,
+        ),
+      );
+      expect(back.reasons, {1: '原因'});
+      expect(BlackMidRule(url: 'b').toJson().containsKey('reasons'), isFalse);
+    });
+
+    test('apply 更新规则的原因', () {
+      final rule = BlackMidRule(url: 'a');
+      BlackMidRules.apply(rule, {1, 2}, [rule], {}, reasons: {2: 'x'});
+      expect(rule.reasons, {2: 'x'});
+      BlackMidRules.apply(rule, {1}, [rule], {});
+      expect(rule.reasons, isEmpty);
     });
   });
 
