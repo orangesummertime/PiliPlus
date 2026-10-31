@@ -29,7 +29,17 @@ MainListReply _page(
 
 /// Serves fake pages: hot ids are 100+, time ids are 1..; cursor = page index.
 class _Controller extends ReplyController<MainListReply> {
-  _Controller({this.total = 100, this.firstTimePage});
+  _Controller({
+    this.total = 100,
+    this.firstTimePage,
+    this.filteredTimePages = const {},
+    this.upTop = 999,
+  });
+
+  /// By-time pages whose replies were all filtered out (served empty).
+  final Set<int> filteredTimePages;
+
+  final int? upTop;
 
   final requests = <String>[];
 
@@ -53,12 +63,14 @@ class _Controller extends ReplyController<MainListReply> {
     final base = (hot ? 100 : 0) + page * 10;
     return Success(
       _page(
-        !hot && page == 0 && firstTimePage != null
+        !hot && filteredTimePages.contains(page)
+            ? const []
+            : !hot && page == 0 && firstTimePage != null
             ? firstTimePage!
             : [for (var i = 1; i <= 10; i++) base + i],
         next: page + 1,
         end: hot && page == 1,
-        upTop: 999,
+        upTop: upTop,
         total: total,
       ),
     );
@@ -87,10 +99,57 @@ void main() {
     ReplySortType sort, {
     int total = 100,
     List<int>? firstTimePage,
+    Set<int> filteredTimePages = const {},
+    int? upTop = 999,
   }) {
     GStorage.setting.put(SettingBoxKey.replySortType, sort.index);
-    return _Controller(total: total, firstTimePage: firstTimePage)..onInit();
+    return _Controller(
+      total: total,
+      firstTimePage: firstTimePage,
+      filteredTimePages: filteredTimePages,
+      upTop: upTop,
+    )..onInit();
   }
+
+  test('首页评论全被过滤：自动往后加载，直到有评论', () async {
+    final c = create(
+      ReplySortType.time,
+      filteredTimePages: {0, 1, 2},
+      upTop: null,
+      total: 1000,
+    );
+    await c.queryData();
+    expect(c.requests, ['time:0', 'time:1', 'time:2', 'time:3']);
+    expect(_ids(c.loadingState.value.data!), [
+      for (var i = 31; i <= 40; i++) i,
+    ]);
+    expect(c.isEnd, isFalse);
+  });
+
+  test('加载更多时整页被过滤：同样跳过', () async {
+    final c = create(
+      ReplySortType.time,
+      filteredTimePages: {1, 2},
+      upTop: null,
+      total: 1000,
+    );
+    await c.queryData();
+    await c.onLoadMore();
+    expect(c.requests, ['time:0', 'time:1', 'time:2', 'time:3']);
+    expect(_ids(c.loadingState.value.data!).last, 40);
+  });
+
+  test('连续被过滤的页数有上限', () async {
+    final c = create(
+      ReplySortType.time,
+      filteredTimePages: {for (var i = 0; i < 100; i++) i},
+      upTop: null,
+      total: 1000,
+    );
+    await c.queryData();
+    expect(c.requests.length, 1 + ReplyController.maxFilteredPages);
+    expect(c.loadingState.value.data, isEmpty);
+  });
 
   test('经典：热评来自最热接口，列表按时间，置顶在头部', () async {
     final c = create(ReplySortType.classic);

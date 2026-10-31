@@ -1,6 +1,7 @@
 import 'package:PiliPlus/common/skeleton/video_reply.dart';
 import 'package:PiliPlus/common/sliver_single_child_delegate.dart';
 import 'package:PiliPlus/common/style.dart';
+import 'package:PiliPlus/common/widgets/edge_swipe_dismiss.dart';
 import 'package:PiliPlus/common/widgets/flutter/refresh_indicator.dart';
 import 'package:PiliPlus/common/widgets/loading_widget/http_error.dart';
 import 'package:PiliPlus/common/widgets/scaffold/simple_scaffold.dart';
@@ -282,7 +283,7 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
   }
 
   void _showRemovedReplies() {
-    showModalBottomSheet(
+    showEdgeSwipeModalBottomSheet(
       context: context,
       useSafeArea: true,
       isScrollControlled: true,
