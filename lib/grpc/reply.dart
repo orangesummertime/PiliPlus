@@ -4,11 +4,13 @@ import 'package:PiliPlus/grpc/bilibili/pagination.pb.dart';
 import 'package:PiliPlus/grpc/grpc_req.dart';
 import 'package:PiliPlus/grpc/url.dart';
 import 'package:PiliPlus/http/loading_state.dart';
+import 'package:PiliPlus/utils/global_data.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:fixnum/fixnum.dart';
 
 abstract final class ReplyGrpc {
   static bool antiGoodsReply = Pref.antiGoodsReply;
+  static bool hideBlackMidReply = Pref.hideBlackMidReply;
   static var blockAtOnlyReply = Pref.blockAtOnlyReply;
   static var blockReplyAtCount = Pref.blockReplyAtCount;
   static RegExp replyRegExp = RegExp(
@@ -101,7 +103,9 @@ abstract final class ReplyGrpc {
   }
 
   static bool needRemoveGrpc(ReplyInfo reply) {
-    return _blockReplyAtCount(reply) ||
+    return (hideBlackMidReply &&
+            GlobalData().blackMids.contains(reply.mid.toInt())) ||
+        _blockReplyAtCount(reply) ||
         _blockAtOnlyReply(reply) ||
         (antiGoodsReply && _needRemoveGoodGrpc(reply)) ||
         (enableFilter && replyRegExp.hasMatch(reply.content.message)) ||
