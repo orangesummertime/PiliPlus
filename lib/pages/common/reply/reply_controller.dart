@@ -103,6 +103,9 @@ mixin ReplyLocateMixin<T>
 abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
   ReplyController({int count = -1}) : count = RxInt(count);
 
+  int get oid;
+  int get replyType;
+
   Int64? rootRpId;
   late final RxInt count;
 
@@ -118,7 +121,7 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
   late bool hasUpTop = false;
 
   @override
-  bool? get hasFooter => true;
+  bool get hasFooter => true;
 
   // comment antifraud
   late final _enableCommAntifraud = Pref.enableCommAntifraud;
@@ -243,8 +246,24 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
         _clearClassic();
       }
     }
-    return super.queryData(isRefresh);
+    _pageFilteredOut = false;
+    await super.queryData(isRefresh);
+    // A page whose replies were all filtered out (local blacklist, keywords,
+    // ...) comes back empty, and the base controller then takes the list as
+    // finished, so nothing below it would ever load. Keep going while the
+    // server has more, up to a limit.
+    for (var i = 0; i < maxFilteredPages && _pageFilteredOut; i++) {
+      isEnd = false;
+      _pageFilteredOut = false;
+      await super.queryData(false);
+    }
   }
+
+  /// How many consecutive fully filtered pages are skipped automatically.
+  static const maxFilteredPages = 10;
+
+  /// The last page had no replies left after filtering, but is not the last.
+  bool _pageFilteredOut = false;
 
   /// "更多热门评论": expand the loaded hot replies, then load more pages.
   Future<void> onClassicHotMore() async {
@@ -355,6 +374,7 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
     isEnd = data.cursor.isEnd;
 
     _removeIntro(data);
+    _pageFilteredOut = data.replies.isEmpty && !data.cursor.isEnd;
 
     return false;
   }

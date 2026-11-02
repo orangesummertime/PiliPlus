@@ -34,6 +34,7 @@ import 'package:PiliPlus/plugin/pl_player/models/hwdec_type.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_repeat.dart';
 import 'package:PiliPlus/utils/device_utils.dart';
 import 'package:PiliPlus/utils/extension/iterable_ext.dart';
+import 'package:PiliPlus/utils/black_mid_reasons.dart';
 import 'package:PiliPlus/utils/global_data.dart';
 import 'package:PiliPlus/utils/login_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
@@ -78,10 +79,13 @@ abstract final class Pref {
     GlobalData().blackMids..add(mid),
   );
 
-  static void removeBlackMid(int mid) => _localCache.put(
-    LocalCacheKey.blackMids,
-    GlobalData().blackMids..remove(mid),
-  );
+  static void removeBlackMid(int mid) {
+    BlackMidReasons.setLocal(mid, null);
+    _localCache.put(
+      LocalCacheKey.blackMids,
+      GlobalData().blackMids..remove(mid),
+    );
+  }
 
   static MemberTabType get memberTab =>
       MemberTabType.values[_setting.get(
@@ -536,6 +540,9 @@ abstract final class Pref {
 
   static bool get antiGoodsReply =>
       _setting.get(SettingBoxKey.antiGoodsReply, defaultValue: false);
+
+  static bool get hideBlackMidReply =>
+      _setting.get(SettingBoxKey.hideBlackMidReply, defaultValue: true);
 
   static bool get expandDynLivePanel =>
       _setting.get(SettingBoxKey.expandDynLivePanel, defaultValue: false);

@@ -69,6 +69,14 @@ List<SettingsModel> get replySettings => [
     defaultVal: false,
     onChanged: (value) => ReplyGrpc.antiGoodsReply = value,
   ),
+  SwitchModel(
+    title: '隐藏黑名单用户的评论',
+    subtitle: '关闭后照常显示，并在昵称旁标记「已拉黑」',
+    leading: const Icon(Icons.person_off_outlined),
+    setKey: SettingBoxKey.hideBlackMidReply,
+    defaultVal: true,
+    onChanged: (value) => ReplyGrpc.hideBlackMidReply = value,
+  ),
   const NormalModel(
     title: '屏蔽评论@数量',
     getSubtitle: _replyAtBlockSubtitle,

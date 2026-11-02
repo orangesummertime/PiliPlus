@@ -1,6 +1,6 @@
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo;
-import 'package:PiliPlus/pages/common/reply_controller.dart';
+import 'package:PiliPlus/pages/common/reply/reply_controller.dart';
 import 'package:material_ui/material_ui.dart';
 
 /// Leading items of the top level comment list in the classic (经典) layout:

@@ -1,6 +1,7 @@
 import 'dart:convert' show LineSplitter, jsonDecode, jsonEncode, utf8;
 
 import 'package:PiliPlus/http/browser_ua.dart';
+import 'package:PiliPlus/utils/black_mid_reasons.dart';
 import 'package:PiliPlus/utils/global_data.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
@@ -14,10 +15,12 @@ class BlackMidRule {
     required this.url,
     List<int>? mids,
     List<int>? owned,
+    Map<int, String>? reasons,
     this.updatedAt,
     this.error,
   }) : mids = mids ?? [],
-       owned = owned ?? [];
+       owned = owned ?? [],
+       reasons = reasons ?? {};
 
   final String url;
 
@@ -29,6 +32,9 @@ class BlackMidRule {
   /// account-synced UIDs are never touched
   List<int> owned;
 
+  /// `uid #reason` comments in the list, shown next to the 已拉黑 badge
+  Map<int, String> reasons;
+
   /// epoch milliseconds of the last successful update
   int? updatedAt;
 
@@ -39,6 +45,9 @@ class BlackMidRule {
     url: json['url'] as String,
     mids: (json['mids'] as List?)?.cast<int>(),
     owned: (json['owned'] as List?)?.cast<int>(),
+    reasons: (json['reasons'] as Map?)?.map(
+      (k, v) => MapEntry(int.parse(k as String), v as String),
+    ),
     updatedAt: json['updatedAt'] as int?,
     error: json['error'] as String?,
   );
@@ -47,6 +56,8 @@ class BlackMidRule {
     'url': url,
     'mids': mids,
     'owned': owned,
+    if (reasons.isNotEmpty)
+      'reasons': reasons.map((k, v) => MapEntry(k.toString(), v)),
     'updatedAt': ?updatedAt,
     'error': ?error,
   };
@@ -60,7 +71,10 @@ abstract final class BlackMidRules {
   static final _spaceUrlRegExp = RegExp(r'space\.bilibili\.com/(\d+)');
   static final _separatorRegExp = RegExp(r'[\s,;，；、|]+');
   static final _digitsRegExp = RegExp(r'^\d{1,19}$');
-  static final _commentRegExp = RegExp(r'(^|\s)(#|!|//).*$');
+
+  /// `!` and `//` start a comment at line begin or after whitespace (so the
+  /// `//` in `https://` is kept); `#` starts one anywhere
+  static final _commentRegExp = RegExp(r'#|(?:^|\s)(?:!|//)');
 
   /// serializes load-modify-save so auto update and manual actions don't race
   static Future<void> _queue = Future.value();
@@ -104,34 +118,51 @@ abstract final class BlackMidRules {
   /// One or more UIDs per line, separated by spaces / commas / semicolons.
   /// `#`, `//` and `!` start a comment. A `space.bilibili.com/<uid>` link
   /// counts as its UID. Anything else is ignored.
-  static Set<int> parse(String text) {
-    final result = <int>{};
+  static Set<int> parse(String text) => parseWithReasons(text).mids;
+
+  /// Like [parse], also returning the inline comment of each UID line
+  /// (`123456 #reason`) as that UID's reason.
+  static ({Set<int> mids, Map<int, String> reasons}) parseWithReasons(
+    String text,
+  ) {
+    final mids = <int>{};
+    final reasons = <int, String>{};
     for (var line in const LineSplitter().convert(text)) {
-      // comments start at line begin or after whitespace, so the `//` in
-      // `https://` is kept
-      line = line.replaceFirst(_commentRegExp, '');
+      String? reason;
+      if (_commentRegExp.firstMatch(line) case final m?) {
+        reason = line.substring(m.end).trim();
+        line = line.substring(0, m.start);
+      }
       line = line.trim();
       if (line.isEmpty) continue;
 
+      final lineMids = <int>[];
       final spaceMatches = _spaceUrlRegExp.allMatches(line);
       if (spaceMatches.isNotEmpty) {
         for (final m in spaceMatches) {
           final mid = int.tryParse(m.group(1)!);
-          if (mid != null && mid > 0) result.add(mid);
+          if (mid != null && mid > 0) lineMids.add(mid);
         }
-        continue;
+      } else {
+        for (final token in line.split(_separatorRegExp)) {
+          if (!_digitsRegExp.hasMatch(token)) continue;
+          final mid = int.tryParse(token);
+          if (mid != null && mid > 0) lineMids.add(mid);
+        }
       }
-
-      for (final token in line.split(_separatorRegExp)) {
-        if (!_digitsRegExp.hasMatch(token)) continue;
-        final mid = int.tryParse(token);
-        if (mid != null && mid > 0) result.add(mid);
+      mids.addAll(lineMids);
+      if (reason != null && reason.isNotEmpty) {
+        for (final mid in lineMids) {
+          reasons.putIfAbsent(mid, () => reason!);
+        }
       }
     }
-    return result;
+    return (mids: mids, reasons: reasons);
   }
 
-  static Future<Set<int>> _fetch(String url) async {
+  static Future<({Set<int> mids, Map<int, String> reasons})> _fetch(
+    String url,
+  ) async {
     final dio = Dio(
       BaseOptions(
         connectTimeout: const Duration(seconds: 15),
@@ -148,7 +179,7 @@ abstract final class BlackMidRules {
         throw Exception('文件过大（超过 8MB）');
       }
       final text = utf8.decode(bytes, allowMalformed: true);
-      return await compute(parse, text);
+      return await compute(parseWithReasons, text);
     } finally {
       dio.close(force: true);
     }
@@ -161,8 +192,9 @@ abstract final class BlackMidRules {
     BlackMidRule rule,
     Set<int> newMids,
     List<BlackMidRule> rules,
-    Set<int> blackMids,
-  ) {
+    Set<int> blackMids, {
+    Map<int, String>? reasons,
+  }) {
     final owned = rule.owned.toSet();
 
     // take back UIDs this rule added that are no longer listed
@@ -182,6 +214,7 @@ abstract final class BlackMidRules {
     rule
       ..mids = newMids.toList()
       ..owned = newOwned.toList()
+      ..reasons = reasons ?? {}
       ..updatedAt = DateTime.now().millisecondsSinceEpoch
       ..error = null;
     return added;
@@ -276,9 +309,15 @@ abstract final class BlackMidRules {
 
     var added = 0;
     var failed = 0;
-    for (final (rule, mids, error) in results) {
-      if (mids != null) {
-        added += apply(rule, mids, rules, GlobalData().blackMids);
+    for (final (rule, parsed, error) in results) {
+      if (parsed != null) {
+        added += apply(
+          rule,
+          parsed.mids,
+          rules,
+          GlobalData().blackMids,
+          reasons: parsed.reasons,
+        );
       } else {
         rule.error = error;
         failed++;
@@ -286,6 +325,7 @@ abstract final class BlackMidRules {
     }
     _saveBlackMids();
     await _save(rules);
+    BlackMidReasons.invalidateRules();
 
     final ok = targets.length - failed;
     final parts = ['更新 $ok 个规则', '新增 $added 个 UID'];
@@ -304,6 +344,7 @@ abstract final class BlackMidRules {
     rules.removeAt(index);
     _saveBlackMids();
     await _save(rules);
+    BlackMidReasons.invalidateRules();
   }
 
   /// Called on app start: refreshes rules not updated within a day.
