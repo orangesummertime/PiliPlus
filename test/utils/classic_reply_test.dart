@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/models/common/reply/reply_sort_type.dart';
-import 'package:PiliPlus/pages/common/reply_controller.dart';
+import 'package:PiliPlus/pages/common/reply/reply_controller.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
 import 'package:fixnum/fixnum.dart';
@@ -51,6 +51,12 @@ class _Controller extends ReplyController<MainListReply> {
 
   @override
   dynamic get sourceId => 1;
+
+  @override
+  int get oid => 1;
+
+  @override
+  int get replyType => 1;
 
   @override
   List<ReplyInfo>? getDataList(MainListReply response) => response.replies;

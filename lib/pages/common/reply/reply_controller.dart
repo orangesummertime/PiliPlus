@@ -103,6 +103,9 @@ mixin ReplyLocateMixin<T>
 abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
   ReplyController({int count = -1}) : count = RxInt(count);
 
+  int get oid;
+  int get replyType;
+
   Int64? rootRpId;
   late final RxInt count;
 
@@ -118,7 +121,7 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
   late bool hasUpTop = false;
 
   @override
-  bool? get hasFooter => true;
+  bool get hasFooter => true;
 
   // comment antifraud
   late final _enableCommAntifraud = Pref.enableCommAntifraud;
