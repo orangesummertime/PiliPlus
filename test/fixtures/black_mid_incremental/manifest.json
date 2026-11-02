@@ -1,0 +1,15 @@
+{
+  "format": 1,
+  "version": 2,
+  "count": 3,
+  "snapshot": {
+    "url": "snapshot-2-75759bb3bfaaef994e56.txt.gz",
+    "size": 51
+  },
+  "deltas": {
+    "1": {
+      "url": "delta-1-to-2-3ca36df4fb500984198b.txt.gz",
+      "size": 53
+    }
+  }
+}

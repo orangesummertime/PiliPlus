@@ -83,8 +83,7 @@ abstract final class VideoHttp {
 
   static bool _filterWebRcmd(dynamic i) {
     if (i['goto'] != 'av') return true;
-    if (i['owner'] != null &&
-        GlobalData().blackMids.contains(i['owner']['mid'])) {
+    if (i['owner'] != null && GlobalData().isBlackMid(i['owner']['mid'])) {
       return true;
     }
     return false;
@@ -97,8 +96,7 @@ abstract final class VideoHttp {
         i['can_play'] != 1) {
       return true;
     }
-    if (i['args'] != null &&
-        GlobalData().blackMids.contains(i['args']['up_id'])) {
+    if (i['args'] != null && GlobalData().isBlackMid(i['args']['up_id'])) {
       return true;
     }
     if (enableFilter &&
@@ -178,7 +176,7 @@ abstract final class VideoHttp {
   }
 
   static bool _filterHotAndRank(dynamic i) {
-    if (GlobalData().blackMids.contains(i['owner']['mid'])) return false;
+    if (GlobalData().isBlackMid(i['owner']['mid'])) return false;
     if (RecommendFilter.filterTitle(i['title'])) return false;
     if (RecommendFilter.filterLikeRatio(i['stat']['like'], i['stat']['view'])) {
       return false;

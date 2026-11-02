@@ -1,3 +1,4 @@
+import 'package:PiliPlus/utils/black_mid_rules.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 
 class GlobalData {
@@ -11,7 +12,13 @@ class GlobalData {
     }
   }
 
+  /// UIDs blocked by hand (or synced from the account); online rule lists
+  /// are kept apart, see [isBlackMid].
   Set<int> blackMids = Pref.blackMids;
+
+  /// Whether [mid] is blocked locally or by an online UID rule.
+  bool isBlackMid(Object? mid) =>
+      mid is int && (blackMids.contains(mid) || BlackMidRules.contains(mid));
 
   bool dynamicsWaterfallFlow = Pref.dynamicsWaterfallFlow;
 
@@ -29,5 +36,5 @@ class GlobalData {
 
 extension IterableExt<E> on Iterable<E> {
   Iterable<E> whereNotBlocked(Object? /* mid */ Function(E element) test) =>
-      where((e) => !GlobalData().blackMids.contains(test(e)));
+      where((e) => !GlobalData().isBlackMid(test(e)));
 }

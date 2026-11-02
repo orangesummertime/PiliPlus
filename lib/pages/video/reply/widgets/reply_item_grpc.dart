@@ -203,7 +203,7 @@ class ReplyItemGrpc extends StatelessWidget {
                       ),
                     ),
                     if (replyItem.replyControl.blocked ||
-                        GlobalData().blackMids.contains(replyItem.mid.toInt()))
+                        GlobalData().isBlackMid(replyItem.mid.toInt()))
                       BlackMidBadge(mid: replyItem.mid.toInt()),
                     BiliUtils.levelPicture(
                       member.level.toInt(),

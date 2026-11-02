@@ -34,20 +34,13 @@ class _RuleSheet extends StatefulWidget {
 }
 
 class _RuleSheetState extends State<_RuleSheet> {
-  List<BlackMidRule> _rules = BlackMidRules.loaded ?? const [];
+  List<BlackMidRule> get _rules => BlackMidRules.rules;
 
   /// urls being updated; empty string means "all"
   final Set<String> _busy = {};
 
-  @override
-  void initState() {
-    super.initState();
-    if (BlackMidRules.loaded == null) _reload();
-  }
-
-  Future<void> _reload() async {
-    final rules = await BlackMidRules.load();
-    if (mounted) setState(() => _rules = rules);
+  void _reload() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _run(String key, Future<String?> Function() action) async {
@@ -76,7 +69,10 @@ class _RuleSheetState extends State<_RuleSheet> {
         keyboardType: .url,
         onChanged: (value) => text = value,
         decoration: const InputDecoration(
-          hintText: 'https://example.com/uid.txt\n每行一个链接，可一次添加多个',
+          hintText:
+              'https://example.com/uid.txt\n'
+              'https://example.com/manifest.json\n'
+              '每行一个链接，可一次添加多个',
           border: OutlineInputBorder(),
         ),
       ),
@@ -128,8 +124,8 @@ class _RuleSheetState extends State<_RuleSheet> {
                 context: this.context,
                 title: const Text('删除该规则？'),
                 content: Text(
-                  '将移除它添加的 ${rule.owned.length} 个 UID'
-                  '（其他规则或手动添加的不受影响）',
+                  '它的 ${rule.count} 个 UID 将不再屏蔽'
+                  '（手动添加的不受影响）',
                 ),
               );
               if (confirm) {
@@ -186,9 +182,10 @@ class _RuleSheetState extends State<_RuleSheet> {
         Padding(
           padding: const .fromLTRB(20, 0, 20, 8),
           child: Text(
-            'txt 文件，每行一个或多个 UID（空格/逗号分隔），'
-            '支持 space.bilibili.com 链接，# 开头为注释。'
-            '每天启动时自动更新。',
+            'txt 文件：每行一个或多个 UID（空格/逗号分隔），'
+            '支持 space.bilibili.com 链接，# 后为注释（即拉黑原因），'
+            '每天启动时检查更新；'
+            '增量名单（manifest.json）：只下载变化部分，每小时检查更新。',
             style: outline,
           ),
         ),
@@ -215,14 +212,19 @@ class _RuleSheetState extends State<_RuleSheet> {
                       ),
                       subtitle: Text(
                         [
-                          '${rule.mids.length} 个 UID，'
-                              '新增 ${rule.owned.length}',
+                          '${rule.count} 个 UID',
+                          if (rule.manifest) '增量 v${rule.version}',
                           updatedAt == null
                               ? '未更新'
-                              : '更新于 ${DateFormatUtils.format(
+                              : '检查于 ${DateFormatUtils.format(
                                   updatedAt ~/ 1000,
                                   format: DateFormatUtils.longFormatDs,
                                 )}',
+                          if (rule.changedAt case final changedAt?)
+                            '变更于 ${DateFormatUtils.format(
+                              changedAt ~/ 1000,
+                              format: DateFormatUtils.longFormatDs,
+                            )}',
                           if (rule.error case final error?) '失败：$error',
                         ].join(' · '),
                         maxLines: 3,

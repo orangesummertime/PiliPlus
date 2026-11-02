@@ -7,7 +7,6 @@ abstract final class BlackMidReasons {
   static const _storageKey = 'blackMidReasons';
 
   static Map<int, String>? _local;
-  static Map<int, ({String reason, String url})>? _rules;
 
   static Map<int, String> get _localMap => _local ??= _loadLocal();
 
@@ -21,29 +20,13 @@ abstract final class BlackMidReasons {
     };
   }
 
-  static Map<int, ({String reason, String url})> get _ruleMap {
-    if (_rules case final map?) return map;
-    // not loaded yet: see [preload]
-    final rules = BlackMidRules.loaded;
-    if (rules == null) return const {};
-    return _rules = {
-      for (final rule in rules.reversed)
-        for (final e in rule.reasons.entries)
-          e.key: (reason: e.value, url: rule.url),
-    };
-  }
-
-  /// Loads the online rules (in the background) so their reasons are known.
-  static Future<void> preload() async {
-    await BlackMidRules.load();
-    invalidateRules();
-  }
-
   /// The reason for [mid] and where it came from (`url` is null for a
   /// manually added one), or null if there is none.
   static ({String reason, String? url})? of(int mid) {
     if (_localMap[mid] case final reason?) return (reason: reason, url: null);
-    if (_ruleMap[mid] case final r?) return (reason: r.reason, url: r.url);
+    if (BlackMidRules.reasonOf(mid) case final r?) {
+      return (reason: r.reason, url: r.url);
+    }
     return null;
   }
 
@@ -62,7 +45,4 @@ abstract final class BlackMidReasons {
     }
     GStorage.localCache.put(_storageKey, map);
   }
-
-  /// Rule reasons changed (a rule was updated or removed).
-  static void invalidateRules() => _rules = null;
 }

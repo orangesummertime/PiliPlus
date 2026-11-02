@@ -1,0 +1,10 @@
+{
+  "format": 1,
+  "version": 1,
+  "count": 3,
+  "snapshot": {
+    "url": "snapshot-1-b85b53719f4d8ce63bee.txt.gz",
+    "size": 68
+  },
+  "deltas": {}
+}

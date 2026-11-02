@@ -1,71 +1,100 @@
 import 'dart:convert' show LineSplitter, jsonDecode, jsonEncode, utf8;
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:PiliPlus/http/browser_ua.dart';
-import 'package:PiliPlus/utils/black_mid_reasons.dart';
+import 'package:PiliPlus/utils/black_mid_store.dart';
 import 'package:PiliPlus/utils/global_data.dart';
+import 'package:PiliPlus/utils/path_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart'
     show compute, debugPrint, kDebugMode, visibleForTesting;
+import 'package:path/path.dart' as path;
 
-/// An online UID rule list (plain text) merged into the local blacklist.
+/// An online UID rule list. Its UIDs live in a [BlackMidStore] file of their
+/// own and are checked alongside the local blacklist; they are not copied
+/// into it.
+///
+/// Two kinds of list are supported:
+/// - a plain txt list (`uid #reason` per line), downloaded whole; skipped
+///   when the server answers 304 or the content did not change
+/// - an incremental list: a `manifest.json` (format 1) pointing at a gzip
+///   snapshot and cumulative deltas from older versions
 class BlackMidRule {
   BlackMidRule({
     required this.url,
-    List<int>? mids,
-    List<int>? owned,
-    Map<int, String>? reasons,
+    this.count = 0,
+    this.manifest = false,
+    this.version,
+    this.etag,
+    this.lastModified,
+    this.hash,
     this.updatedAt,
+    this.changedAt,
     this.error,
-  }) : mids = mids ?? [],
-       owned = owned ?? [],
-       reasons = reasons ?? {};
+  });
 
   final String url;
 
-  /// every UID in the list as last downloaded
-  List<int> mids;
+  /// UIDs in the list
+  int count;
 
-  /// UIDs this rule actually added to the local blacklist; only these are
-  /// taken back when the rule is updated or removed, so manually added /
-  /// account-synced UIDs are never touched
-  List<int> owned;
+  /// an incremental list (manifest.json)
+  bool manifest;
 
-  /// `uid #reason` comments in the list, shown next to the 已拉黑 badge
-  Map<int, String> reasons;
+  /// manifest version the local copy is at
+  int? version;
 
-  /// epoch milliseconds of the last successful update
+  /// validators of the last response, for conditional requests
+  String? etag;
+  String? lastModified;
+
+  /// content hash of the last txt download
+  String? hash;
+
+  /// epoch milliseconds of the last successful check / last change
   int? updatedAt;
+  int? changedAt;
 
   /// last update error, null if it succeeded
   String? error;
 
   factory BlackMidRule.fromJson(Map<String, dynamic> json) => BlackMidRule(
     url: json['url'] as String,
-    mids: (json['mids'] as List?)?.cast<int>(),
-    owned: (json['owned'] as List?)?.cast<int>(),
-    reasons: (json['reasons'] as Map?)?.map(
-      (k, v) => MapEntry(int.parse(k as String), v as String),
-    ),
+    count: json['count'] as int? ?? 0,
+    manifest: json['manifest'] as bool? ?? false,
+    version: json['version'] as int?,
+    etag: json['etag'] as String?,
+    lastModified: json['lastModified'] as String?,
+    hash: json['hash'] as String?,
     updatedAt: json['updatedAt'] as int?,
+    changedAt: json['changedAt'] as int?,
     error: json['error'] as String?,
   );
 
   Map<String, dynamic> toJson() => {
     'url': url,
-    'mids': mids,
-    'owned': owned,
-    if (reasons.isNotEmpty)
-      'reasons': reasons.map((k, v) => MapEntry(k.toString(), v)),
+    'count': count,
+    if (manifest) 'manifest': true,
+    'version': ?version,
+    'etag': ?etag,
+    'lastModified': ?lastModified,
+    'hash': ?hash,
     'updatedAt': ?updatedAt,
+    'changedAt': ?changedAt,
     'error': ?error,
   };
 }
 
+/// Result of updating one rule.
+typedef _Change = ({int added, int removed});
+
 abstract final class BlackMidRules {
   static const _storageKey = 'blackMidRules';
-  static const _autoUpdateInterval = Duration(days: 1);
+  static const _txtInterval = Duration(days: 1);
+  static const _manifestInterval = Duration(hours: 1);
 
   static final _spaceUrlRegExp = RegExp(r'space\.bilibili\.com/(\d+)');
   static final _separatorRegExp = RegExp(r'[\s,;，；、|]+');
@@ -84,44 +113,151 @@ abstract final class BlackMidRules {
     return result;
   }
 
-  static List<BlackMidRule>? _cache;
-  static Future<List<BlackMidRule>>? _loading;
+  static List<BlackMidRule> _rules = [];
+  static final Map<String, BlackMidStore> _stores = {};
 
-  /// The rules, once [load] has finished.
-  static List<BlackMidRule>? get loaded => _cache;
+  /// The rules (after [init]).
+  static List<BlackMidRule> get rules => _rules;
 
-  /// Loads the saved rules. Lists can hold hundreds of thousands of UIDs, so
-  /// decoding runs off the UI isolate; the result is kept in memory.
-  static Future<List<BlackMidRule>> load() async {
-    if (_cache case final rules?) return rules;
-    return _loading ??= () async {
+  @visibleForTesting
+  static String? debugStoreDir;
+
+  static String get _storeDir =>
+      debugStoreDir ?? path.join(appSupportDirPath, 'black_mid_rules');
+
+  static String _storePath(String url) {
+    // FNV-1a, enough to give each rule its own file name
+    var h = 0xcbf29ce484222325;
+    for (final c in utf8.encode(url)) {
+      h = (h ^ c) * 0x100000001b3;
+    }
+    return path.join(
+      _storeDir,
+      '${h.toUnsigned(64).toRadixString(16)}.bin',
+    );
+  }
+
+  /// Whether any rule lists [mid].
+  static bool contains(int mid) {
+    for (final store in _stores.values) {
+      if (store.contains(mid)) return true;
+    }
+    return false;
+  }
+
+  /// The reason a rule gives for [mid], and that rule's URL.
+  static ({String reason, String url})? reasonOf(int mid) {
+    for (final MapEntry(key: url, value: store) in _stores.entries) {
+      if (store.reasonOf(mid) case final reason?) {
+        return (reason: reason, url: url);
+      }
+    }
+    return null;
+  }
+
+  // ---- persistence ----
+
+  static bool _initialized = false;
+
+  /// Loads the rules and their UID files. Call once on start.
+  static Future<void> init() => _locked(() async {
+    if (_initialized) return;
+    _initialized = true;
+    try {
       final raw = GStorage.localCache.get(_storageKey);
-      var rules = <BlackMidRule>[];
-      if (raw is String && raw.isNotEmpty) {
-        try {
-          rules = await compute(_decode, raw);
-        } catch (e) {
-          if (kDebugMode) debugPrint('BlackMidRules load: $e');
+      if (raw is! String || raw.isEmpty) return;
+      final list = await compute(_decodeJson, raw);
+      if (list.any((e) => e.containsKey('mids'))) {
+        await _migrate(list);
+        return;
+      }
+      _rules = list.map(BlackMidRule.fromJson).toList();
+      final stores = await Future.wait(
+        _rules.map((e) => compute(_readStore, _storePath(e.url))),
+      );
+      for (var i = 0; i < _rules.length; i++) {
+        if (stores[i] case final store?) {
+          _stores[_rules[i].url] = store;
+        } else {
+          // the file is gone: download it again on the next update
+          _rules[i]
+            ..resetValidators()
+            ..updatedAt = null;
         }
       }
-      _loading = null;
-      return _cache = rules;
-    }();
+    } catch (e) {
+      if (kDebugMode) debugPrint('BlackMidRules init: $e');
+    }
+  });
+
+  static List<Map<String, dynamic>> _decodeJson(String raw) =>
+      (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+
+  static BlackMidStore? _readStore(String file) {
+    try {
+      return BlackMidStore.fromBytes(File(file).readAsBytesSync());
+    } catch (_) {
+      return null;
+    }
   }
 
-  static List<BlackMidRule> _decode(String raw) => (jsonDecode(raw) as List)
-      .map((e) => BlackMidRule.fromJson(e as Map<String, dynamic>))
-      .toList();
-
-  static String _encode(List<BlackMidRule> rules) =>
-      jsonEncode(rules.map((e) => e.toJson()).toList());
-
-  static Future<void> _save(List<BlackMidRule> rules) async {
-    _cache = rules;
-    await GStorage.localCache.put(_storageKey, await compute(_encode, rules));
+  static void _writeStore((String, BlackMidStore) args) {
+    final (file, store) = args;
+    File('$file.tmp')
+      ..parent.createSync(recursive: true)
+      ..writeAsBytesSync(store.toBytes(), flush: true)
+      ..renameSync(file);
   }
 
-  static void _saveBlackMids() => Pref.blackMids = GlobalData().blackMids;
+  static Future<void> _saveRules() => GStorage.localCache.put(
+    _storageKey,
+    jsonEncode(_rules.map((e) => e.toJson()).toList()),
+  );
+
+  static Future<void> _setStore(String url, BlackMidStore store) async {
+    await compute(_writeStore, (_storePath(url), store));
+    _stores[url] = store;
+  }
+
+  /// Rules used to copy their UIDs into the local blacklist (and remember
+  /// the ones they added as `owned`). Take those back out and move every
+  /// list into its own store.
+  static Future<void> _migrate(List<Map<String, dynamic>> list) async {
+    final blackMids = GlobalData().blackMids;
+    for (final json in list) {
+      final url = json['url'] as String;
+      final mids = (json['mids'] as List? ?? const []).cast<int>();
+      final owned = (json['owned'] as List? ?? const []).cast<int>();
+      final reasons = <int, String>{
+        for (final MapEntry(:key, :value)
+            in ((json['reasons'] as Map?) ?? const {}).entries)
+          int.parse(key as String): value as String,
+      };
+      blackMids.removeAll(owned);
+      final store = await compute(
+        _buildStore,
+        (mids: mids.toSet(), reasons: reasons),
+      );
+      await _setStore(url, store);
+      _rules.add(
+        BlackMidRule(
+          url: url,
+          count: store.length,
+          updatedAt: json['updatedAt'] as int?,
+          changedAt: json['updatedAt'] as int?,
+          error: json['error'] as String?,
+        ),
+      );
+    }
+    Pref.blackMids = blackMids;
+    await _saveRules();
+  }
+
+  static BlackMidStore _buildStore(
+    ({Set<int> mids, Map<int, String> reasons}) parsed,
+  ) => BlackMidStore.build(parsed.mids, parsed.reasons);
+
+  // ---- parsing ----
 
   /// Normalizes user input to an http(s) URL, or null if invalid.
   static String? normalizeUrl(String input) {
@@ -180,229 +316,347 @@ abstract final class BlackMidRules {
     return (mids: mids, reasons: reasons);
   }
 
-  static ({Set<int> mids, Map<int, String> reasons}) _parseBytes(
-    List<int> bytes,
-  ) => parseWithReasons(utf8.decode(bytes, allowMalformed: true));
+  /// Parses a delta: `+uid` / `+uid #reason` adds a UID or sets its reason,
+  /// `-uid` removes it. Throws on anything else.
+  @visibleForTesting
+  static ({Map<int, String?> adds, Set<int> removes}) parseDelta(String text) {
+    final adds = <int, String?>{};
+    final removes = <int>{};
+    var n = 0;
+    for (final raw in const LineSplitter().convert(text)) {
+      n++;
+      final line = raw.trim();
+      if (line.isEmpty) continue;
+      final op = line[0];
+      var rest = line.substring(1);
+      String? reason;
+      if (op == '+') {
+        final i = rest.indexOf('#');
+        if (i != -1) {
+          reason = rest.substring(i + 1).trim();
+          rest = rest.substring(0, i);
+        }
+      } else if (op != '-') {
+        throw FormatException('bad delta line $n');
+      }
+      rest = rest.trim();
+      final mid = _digitsRegExp.hasMatch(rest) ? int.tryParse(rest) : null;
+      if (mid == null || mid <= 0) throw FormatException('bad delta line $n');
+      if (op == '+') {
+        adds[mid] = reason == null || reason.isEmpty ? null : reason;
+        removes.remove(mid);
+      } else {
+        removes.add(mid);
+        adds.remove(mid);
+      }
+    }
+    return (adds: adds, removes: removes);
+  }
 
-  static Future<({Set<int> mids, Map<int, String> reasons})> _fetch(
-    String url,
-  ) async {
-    final dio = Dio(
-      BaseOptions(
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(minutes: 2),
-        responseType: ResponseType.bytes,
-        // a plain client: never send the Bilibili cookies to third-party hosts
-        headers: {'user-agent': BrowserUa.platform},
-      ),
-    );
+  static Uint8List _gunzip(Uint8List bytes) =>
+      bytes.length > 2 && bytes[0] == 0x1f && bytes[1] == 0x8b
+      ? Uint8List.fromList(gzip.decode(bytes))
+      : bytes;
+
+  static String _text(Uint8List bytes) =>
+      utf8.decode(_gunzip(bytes), allowMalformed: true);
+
+  /// Builds the store of a full list (txt or snapshot); also counts the
+  /// UIDs added / removed compared with [old].
+  static (BlackMidStore, _Change) _buildFull(
+    (Uint8List bytes, BlackMidStore old) args,
+  ) {
+    final parsed = parseWithReasons(_text(args.$1));
+    final store = BlackMidStore.build(parsed.mids, parsed.reasons);
+    return (store, _diff(args.$2, store));
+  }
+
+  static (BlackMidStore, _Change) _applyDelta(
+    (Uint8List bytes, BlackMidStore old) args,
+  ) {
+    final delta = parseDelta(_text(args.$1));
+    final store = args.$2.apply(delta.adds, delta.removes);
+    return (store, _diff(args.$2, store));
+  }
+
+  static _Change _diff(BlackMidStore a, BlackMidStore b) {
+    var removed = 0;
+    for (final (mid, _) in a.entries) {
+      if (!b.contains(mid)) removed++;
+    }
+    return (added: b.length - a.length + removed, removed: removed);
+  }
+
+  /// FNV-1a of the downloaded bytes, to skip unchanged txt lists.
+  static String _hash(Uint8List bytes) {
+    var h = 0xcbf29ce484222325;
+    for (final c in bytes) {
+      h = (h ^ c) * 0x100000001b3;
+    }
+    return '${bytes.length}-${h.toUnsigned(64).toRadixString(16)}';
+  }
+
+  // ---- updating ----
+
+  static Dio _dio() => Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(minutes: 2),
+      responseType: ResponseType.bytes,
+      // a plain client: never send the Bilibili cookies to third-party hosts
+      headers: {'user-agent': BrowserUa.platform},
+      validateStatus: (status) => status == 200 || status == 304,
+    ),
+  );
+
+  static Future<Response<Uint8List>> _get(
+    Dio dio,
+    String url, {
+    BlackMidRule? conditional,
+  }) => dio.get<Uint8List>(
+    url,
+    options: Options(
+      headers: {
+        'if-none-match': ?conditional?.etag,
+        'if-modified-since': ?conditional?.lastModified,
+      },
+    ),
+  );
+
+  static Uint8List _body(Response<Uint8List> res) => res.data ?? Uint8List(0);
+
+  static bool _looksLikeJson(Uint8List bytes) {
+    for (final c in bytes) {
+      if (c == 0x20 ||
+          c == 0x0a ||
+          c == 0x0d ||
+          c == 0x09 ||
+          c == 0xef ||
+          c == 0xbb ||
+          c == 0xbf) {
+        continue; // whitespace / BOM
+      }
+      return c == 0x7b; // {
+    }
+    return false;
+  }
+
+  /// Updates one rule. Returns null when nothing changed.
+  static Future<_Change?> _updateRule(BlackMidRule rule) async {
+    final dio = _dio();
     try {
-      final res = await dio.get<List<int>>(url);
-      return await compute(_parseBytes, res.data ?? const <int>[]);
+      final old = _stores[rule.url] ?? BlackMidStore.empty;
+      final hasData = _stores.containsKey(rule.url);
+      final res = await _get(
+        dio,
+        rule.url,
+        conditional: hasData ? rule : null,
+      );
+      if (res.statusCode == 304) return null;
+      final bytes = _body(res);
+      final etag = res.headers.value('etag');
+      final lastModified = res.headers.value('last-modified');
+
+      _Change? change;
+      if (_looksLikeJson(bytes)) {
+        change = await _updateManifest(dio, rule, bytes, old, hasData);
+      } else {
+        final hash = await compute(_hash, bytes);
+        if (!hasData || rule.manifest || hash != rule.hash) {
+          final (store, diff) = await compute(_buildFull, (bytes, old));
+          await _setStore(rule.url, store);
+          rule
+            ..manifest = false
+            ..version = null
+            ..count = store.length;
+          change = diff;
+        }
+        rule.hash = hash;
+      }
+      rule
+        ..etag = etag
+        ..lastModified = lastModified;
+      return change;
     } finally {
       dio.close(force: true);
     }
   }
 
-  /// Applies a freshly downloaded list to [rule] and the local blacklist.
-  /// Returns how many UIDs were newly added.
-  @visibleForTesting
-  static int apply(
+  static Future<_Change?> _updateManifest(
+    Dio dio,
     BlackMidRule rule,
-    Set<int> newMids,
-    List<BlackMidRule> rules,
-    Set<int> blackMids, {
-    Map<int, String>? reasons,
-  }) {
-    final owned = rule.owned.toSet();
-
-    // take back UIDs this rule added that are no longer listed
-    final others = _OtherRules(rules, rule);
-    for (final mid in owned.difference(newMids)) {
-      others.release(mid, blackMids);
+    Uint8List bytes,
+    BlackMidStore old,
+    bool hasData,
+  ) async {
+    final Map<String, dynamic> manifest;
+    try {
+      manifest = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    } catch (_) {
+      throw const FormatException('manifest 不是有效的 JSON');
     }
-    others.writeBack();
+    if (manifest['format'] != 1) {
+      throw FormatException('不支持的格式 ${manifest['format']}');
+    }
+    final version = manifest['version'] as int;
+    final count = manifest['count'] as int;
+    final base = Uri.parse(rule.url);
+    String resolve(Map<String, dynamic> file) =>
+        base.resolve(file['url'] as String).toString();
 
-    final newOwned = owned.intersection(newMids);
-    var added = 0;
-    for (final mid in newMids) {
-      if (blackMids.add(mid)) {
-        newOwned.add(mid);
-        added++;
+    if (hasData && rule.manifest && rule.version == version) return null;
+
+    (BlackMidStore, _Change)? result;
+    // cumulative delta from the local version, if the publisher still has it
+    if (hasData && rule.manifest && rule.version != null) {
+      final delta =
+          (manifest['deltas'] as Map?)?['${rule.version}']
+              as Map<String, dynamic>?;
+      if (delta != null) {
+        try {
+          final res = await _get(dio, resolve(delta));
+          final r = await compute(_applyDelta, (_body(res), old));
+          if (r.$1.length == count) result = r;
+        } catch (e) {
+          if (kDebugMode) debugPrint('BlackMidRules delta: $e');
+        }
       }
     }
-
-    rule
-      ..mids = newMids.toList()
-      ..owned = newOwned.toList()
-      ..reasons = reasons ?? {}
-      ..updatedAt = DateTime.now().millisecondsSinceEpoch
-      ..error = null;
-    return added;
-  }
-
-  /// Takes back every UID [rule] added (before the rule is deleted).
-  @visibleForTesting
-  static void release(
-    BlackMidRule rule,
-    List<BlackMidRule> rules,
-    Set<int> blackMids,
-  ) {
-    final others = _OtherRules(rules, rule);
-    for (final mid in rule.owned) {
-      others.release(mid, blackMids);
+    // otherwise (or if the delta did not add up) the full snapshot
+    if (result == null) {
+      final snapshot = manifest['snapshot'] as Map<String, dynamic>;
+      final res = await _get(dio, resolve(snapshot));
+      final full = await compute(_buildFull, (_body(res), old));
+      if (full.$1.length != count) {
+        throw FormatException(
+          '校验失败：快照 ${full.$1.length} 条，清单 $count 条',
+        );
+      }
+      result = full;
     }
-    others.writeBack();
+    await _setStore(rule.url, result.$1);
+    rule
+      ..manifest = true
+      ..version = version
+      ..hash = null
+      ..count = count;
+    return result.$2;
   }
 
   /// Adds rule URLs (duplicates and invalid ones skipped) and updates them.
   /// Returns a short summary for a toast.
   static Future<String> addAndUpdate(Iterable<String> inputs) =>
-      _locked(() => _addAndUpdate(inputs));
-
-  static Future<String> _addAndUpdate(Iterable<String> inputs) async {
-    final rules = await load();
-    final existing = rules.map((e) => e.url).toSet();
-    final added = <BlackMidRule>[];
-    var invalid = 0;
-    for (final input in inputs) {
-      final url = normalizeUrl(input);
-      if (url == null) {
-        if (input.trim().isNotEmpty) invalid++;
-        continue;
-      }
-      if (existing.add(url)) {
-        final rule = BlackMidRule(url: url);
-        rules.add(rule);
-        added.add(rule);
-      }
-    }
-    if (added.isEmpty) {
-      return invalid > 0 ? '链接无效' : '没有新的规则';
-    }
-    await _save(rules);
-    final summary = await _updateRules(rules, added);
-    return invalid > 0 ? '$summary，$invalid 个链接无效' : summary;
-  }
+      _locked(() async {
+        final existing = _rules.map((e) => e.url).toSet();
+        final added = <BlackMidRule>[];
+        var invalid = 0;
+        for (final input in inputs) {
+          final url = normalizeUrl(input);
+          if (url == null) {
+            if (input.trim().isNotEmpty) invalid++;
+            continue;
+          }
+          if (existing.add(url)) {
+            final rule = BlackMidRule(url: url);
+            _rules.add(rule);
+            added.add(rule);
+          }
+        }
+        if (added.isEmpty) {
+          return invalid > 0 ? '链接无效' : '没有新的规则';
+        }
+        await _saveRules();
+        final summary = await _updateRules(added);
+        return invalid > 0 ? '$summary，$invalid 个链接无效' : summary;
+      });
 
   /// Updates the given rules (all if null). Returns a summary for a toast.
-  static Future<String> update([Iterable<String>? urls]) =>
-      _locked(() => _update(urls));
-
-  static Future<String> _update(Iterable<String>? urls) async {
-    final rules = await load();
+  static Future<String> update([Iterable<String>? urls]) => _locked(() {
     final targets = urls == null
-        ? rules
-        : rules.where((e) => urls.contains(e.url)).toList();
-    if (targets.isEmpty) return '没有规则';
-    return _updateRules(rules, targets);
-  }
+        ? _rules
+        : _rules.where((e) => urls.contains(e.url)).toList();
+    if (targets.isEmpty) return Future.value('没有规则');
+    return _updateRules(targets);
+  });
 
-  static Future<String> _updateRules(
-    List<BlackMidRule> rules,
-    List<BlackMidRule> targets,
-  ) async {
-    final results = await Future.wait(
-      targets.map((rule) async {
-        try {
-          return (rule, await _fetch(rule.url), null);
-        } catch (e) {
-          return (rule, null, e is DioException ? e.message ?? '$e' : '$e');
-        }
-      }),
-    );
-
+  static Future<String> _updateRules(List<BlackMidRule> targets) async {
     var added = 0;
+    var removed = 0;
+    var changed = 0;
     var failed = 0;
-    for (final (rule, parsed, error) in results) {
-      if (parsed != null) {
-        added += apply(
-          rule,
-          parsed.mids,
-          rules,
-          GlobalData().blackMids,
-          reasons: parsed.reasons,
-        );
-      } else {
-        rule.error = error;
+    // one by one: the lists can be large, and the server may rate limit
+    for (final rule in targets) {
+      try {
+        final change = await _updateRule(rule);
+        final now = DateTime.now().millisecondsSinceEpoch;
+        rule
+          ..updatedAt = now
+          ..error = null;
+        if (change != null) {
+          rule.changedAt = now;
+          changed++;
+          added += change.added;
+          removed += change.removed;
+        }
+      } catch (e) {
+        rule.error = e is DioException ? e.message ?? '${e.type}' : '$e';
         failed++;
       }
     }
-    _saveBlackMids();
-    await _save(rules);
-    BlackMidReasons.invalidateRules();
+    await _saveRules();
 
     final ok = targets.length - failed;
-    final parts = ['更新 $ok 个规则', '新增 $added 个 UID'];
-    if (failed > 0) parts.add('$failed 个失败');
+    final parts = <String>[
+      if (ok > 0)
+        changed == 0
+            ? '$ok 个规则无变化'
+            : '更新 $changed 个规则，新增 $added 个 UID'
+                  '${removed > 0 ? '，移除 $removed 个' : ''}',
+      if (failed > 0) '$failed 个失败',
+    ];
     return parts.join('，');
   }
 
-  /// Removes a rule and takes back the UIDs only it added.
-  static Future<void> remove(String url) => _locked(() => _remove(url));
-
-  static Future<void> _remove(String url) async {
-    final rules = await load();
-    final index = rules.indexWhere((e) => e.url == url);
-    if (index == -1) return;
-    release(rules[index], rules, GlobalData().blackMids);
-    rules.removeAt(index);
-    _saveBlackMids();
-    await _save(rules);
-    BlackMidReasons.invalidateRules();
-  }
-
-  /// Called on app start: refreshes rules not updated within a day.
-  static Future<void> autoUpdate() => _locked(_autoUpdate);
-
-  static Future<void> _autoUpdate() async {
+  /// Removes a rule; its UIDs stop counting as blocked.
+  static Future<void> remove(String url) => _locked(() async {
+    _rules.removeWhere((e) => e.url == url);
+    _stores.remove(url);
+    await _saveRules();
     try {
-      final rules = await load();
-      if (rules.isEmpty) return;
+      await File(_storePath(url)).delete();
+    } catch (_) {}
+  });
+
+  /// Called on app start (after [init]): refreshes rules that are due —
+  /// incremental lists hourly (the manifest is tiny), txt lists daily.
+  static Future<void> autoUpdate() => _locked(() async {
+    try {
       final now = DateTime.now().millisecondsSinceEpoch;
-      final due = rules
-          .where(
-            (e) =>
-                e.updatedAt == null ||
-                now - e.updatedAt! > _autoUpdateInterval.inMilliseconds,
-          )
-          .toList();
+      final due = _rules.where((e) {
+        final interval = e.manifest ? _manifestInterval : _txtInterval;
+        return e.updatedAt == null ||
+            now - e.updatedAt! > interval.inMilliseconds;
+      }).toList();
       if (due.isEmpty) return;
-      await _updateRules(rules, due);
+      await _updateRules(due);
     } catch (e) {
       if (kDebugMode) debugPrint('BlackMidRules autoUpdate: $e');
     }
+  });
+
+  @visibleForTesting
+  static void debugReset() {
+    _rules = [];
+    _stores.clear();
+    _initialized = false;
   }
 }
 
-/// The other rules of a list, with their UIDs as sets for fast lookups.
-class _OtherRules {
-  _OtherRules(List<BlackMidRule> rules, BlackMidRule from)
-    : _rules = [
-        for (final rule in rules)
-          if (!identical(rule, from)) rule,
-      ];
-
-  final List<BlackMidRule> _rules;
-  final _mids = <BlackMidRule, Set<int>>{};
-  final _owned = <BlackMidRule, Set<int>>{};
-
-  /// Removes [mid] from the blacklist unless another rule still lists it,
-  /// in which case that rule becomes its owner.
-  void release(int mid, Set<int> blackMids) {
-    for (final other in _rules) {
-      if ((_mids[other] ??= other.mids.toSet()).contains(mid)) {
-        (_owned[other] ??= other.owned.toSet()).add(mid);
-        return;
-      }
-    }
-    blackMids.remove(mid);
-  }
-
-  /// Stores the new owners.
-  void writeBack() {
-    for (final MapEntry(key: rule, value: owned) in _owned.entries) {
-      rule.owned = owned.toList();
-    }
+extension on BlackMidRule {
+  void resetValidators() {
+    etag = null;
+    lastModified = null;
+    hash = null;
+    version = null;
   }
 }

@@ -103,8 +103,7 @@ abstract final class ReplyGrpc {
   }
 
   static bool needRemoveGrpc(ReplyInfo reply) {
-    return (hideBlackMidReply &&
-            GlobalData().blackMids.contains(reply.mid.toInt())) ||
+    return (hideBlackMidReply && GlobalData().isBlackMid(reply.mid.toInt())) ||
         _blockReplyAtCount(reply) ||
         _blockAtOnlyReply(reply) ||
         (antiGoodsReply && _needRemoveGoodGrpc(reply)) ||
