@@ -66,7 +66,6 @@ class BlackMidRule {
 abstract final class BlackMidRules {
   static const _storageKey = 'blackMidRules';
   static const _autoUpdateInterval = Duration(days: 1);
-  static const _maxBytes = 8 * 1024 * 1024;
 
   static final _spaceUrlRegExp = RegExp(r'space\.bilibili\.com/(\d+)');
   static final _separatorRegExp = RegExp(r'[\s,;，；、|]+');
@@ -85,21 +84,42 @@ abstract final class BlackMidRules {
     return result;
   }
 
-  static List<BlackMidRule> load() {
-    final raw = GStorage.localCache.get(_storageKey);
-    if (raw is! String || raw.isEmpty) return [];
-    try {
-      return (jsonDecode(raw) as List)
-          .map((e) => BlackMidRule.fromJson(e as Map<String, dynamic>))
-          .toList();
-    } catch (e) {
-      if (kDebugMode) debugPrint('BlackMidRules load: $e');
-      return [];
-    }
+  static List<BlackMidRule>? _cache;
+  static Future<List<BlackMidRule>>? _loading;
+
+  /// The rules, once [load] has finished.
+  static List<BlackMidRule>? get loaded => _cache;
+
+  /// Loads the saved rules. Lists can hold hundreds of thousands of UIDs, so
+  /// decoding runs off the UI isolate; the result is kept in memory.
+  static Future<List<BlackMidRule>> load() async {
+    if (_cache case final rules?) return rules;
+    return _loading ??= () async {
+      final raw = GStorage.localCache.get(_storageKey);
+      var rules = <BlackMidRule>[];
+      if (raw is String && raw.isNotEmpty) {
+        try {
+          rules = await compute(_decode, raw);
+        } catch (e) {
+          if (kDebugMode) debugPrint('BlackMidRules load: $e');
+        }
+      }
+      _loading = null;
+      return _cache = rules;
+    }();
   }
 
-  static Future<void> _save(List<BlackMidRule> rules) => GStorage.localCache
-      .put(_storageKey, jsonEncode(rules.map((e) => e.toJson()).toList()));
+  static List<BlackMidRule> _decode(String raw) => (jsonDecode(raw) as List)
+      .map((e) => BlackMidRule.fromJson(e as Map<String, dynamic>))
+      .toList();
+
+  static String _encode(List<BlackMidRule> rules) =>
+      jsonEncode(rules.map((e) => e.toJson()).toList());
+
+  static Future<void> _save(List<BlackMidRule> rules) async {
+    _cache = rules;
+    await GStorage.localCache.put(_storageKey, await compute(_encode, rules));
+  }
 
   static void _saveBlackMids() => Pref.blackMids = GlobalData().blackMids;
 
@@ -160,13 +180,17 @@ abstract final class BlackMidRules {
     return (mids: mids, reasons: reasons);
   }
 
+  static ({Set<int> mids, Map<int, String> reasons}) _parseBytes(
+    List<int> bytes,
+  ) => parseWithReasons(utf8.decode(bytes, allowMalformed: true));
+
   static Future<({Set<int> mids, Map<int, String> reasons})> _fetch(
     String url,
   ) async {
     final dio = Dio(
       BaseOptions(
         connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(minutes: 2),
         responseType: ResponseType.bytes,
         // a plain client: never send the Bilibili cookies to third-party hosts
         headers: {'user-agent': BrowserUa.platform},
@@ -174,12 +198,7 @@ abstract final class BlackMidRules {
     );
     try {
       final res = await dio.get<List<int>>(url);
-      final bytes = res.data ?? const <int>[];
-      if (bytes.length > _maxBytes) {
-        throw Exception('文件过大（超过 8MB）');
-      }
-      final text = utf8.decode(bytes, allowMalformed: true);
-      return await compute(parseWithReasons, text);
+      return await compute(_parseBytes, res.data ?? const <int>[]);
     } finally {
       dio.close(force: true);
     }
@@ -198,9 +217,11 @@ abstract final class BlackMidRules {
     final owned = rule.owned.toSet();
 
     // take back UIDs this rule added that are no longer listed
+    final others = _OtherRules(rules, rule);
     for (final mid in owned.difference(newMids)) {
-      _releaseMid(mid, rule, rules, blackMids);
+      others.release(mid, blackMids);
     }
+    others.writeBack();
 
     final newOwned = owned.intersection(newMids);
     var added = 0;
@@ -227,27 +248,11 @@ abstract final class BlackMidRules {
     List<BlackMidRule> rules,
     Set<int> blackMids,
   ) {
+    final others = _OtherRules(rules, rule);
     for (final mid in rule.owned) {
-      _releaseMid(mid, rule, rules, blackMids);
+      others.release(mid, blackMids);
     }
-  }
-
-  /// Removes [mid] from the blacklist unless another rule still lists it,
-  /// in which case that rule becomes its owner.
-  static void _releaseMid(
-    int mid,
-    BlackMidRule from,
-    List<BlackMidRule> rules,
-    Set<int> blackMids,
-  ) {
-    for (final other in rules) {
-      if (identical(other, from)) continue;
-      if (other.mids.contains(mid)) {
-        if (!other.owned.contains(mid)) other.owned.add(mid);
-        return;
-      }
-    }
-    blackMids.remove(mid);
+    others.writeBack();
   }
 
   /// Adds rule URLs (duplicates and invalid ones skipped) and updates them.
@@ -256,7 +261,7 @@ abstract final class BlackMidRules {
       _locked(() => _addAndUpdate(inputs));
 
   static Future<String> _addAndUpdate(Iterable<String> inputs) async {
-    final rules = load();
+    final rules = await load();
     final existing = rules.map((e) => e.url).toSet();
     final added = <BlackMidRule>[];
     var invalid = 0;
@@ -285,7 +290,7 @@ abstract final class BlackMidRules {
       _locked(() => _update(urls));
 
   static Future<String> _update(Iterable<String>? urls) async {
-    final rules = load();
+    final rules = await load();
     final targets = urls == null
         ? rules
         : rules.where((e) => urls.contains(e.url)).toList();
@@ -337,7 +342,7 @@ abstract final class BlackMidRules {
   static Future<void> remove(String url) => _locked(() => _remove(url));
 
   static Future<void> _remove(String url) async {
-    final rules = load();
+    final rules = await load();
     final index = rules.indexWhere((e) => e.url == url);
     if (index == -1) return;
     release(rules[index], rules, GlobalData().blackMids);
@@ -352,7 +357,7 @@ abstract final class BlackMidRules {
 
   static Future<void> _autoUpdate() async {
     try {
-      final rules = load();
+      final rules = await load();
       if (rules.isEmpty) return;
       final now = DateTime.now().millisecondsSinceEpoch;
       final due = rules
@@ -366,6 +371,38 @@ abstract final class BlackMidRules {
       await _updateRules(rules, due);
     } catch (e) {
       if (kDebugMode) debugPrint('BlackMidRules autoUpdate: $e');
+    }
+  }
+}
+
+/// The other rules of a list, with their UIDs as sets for fast lookups.
+class _OtherRules {
+  _OtherRules(List<BlackMidRule> rules, BlackMidRule from)
+    : _rules = [
+        for (final rule in rules)
+          if (!identical(rule, from)) rule,
+      ];
+
+  final List<BlackMidRule> _rules;
+  final _mids = <BlackMidRule, Set<int>>{};
+  final _owned = <BlackMidRule, Set<int>>{};
+
+  /// Removes [mid] from the blacklist unless another rule still lists it,
+  /// in which case that rule becomes its owner.
+  void release(int mid, Set<int> blackMids) {
+    for (final other in _rules) {
+      if ((_mids[other] ??= other.mids.toSet()).contains(mid)) {
+        (_owned[other] ??= other.owned.toSet()).add(mid);
+        return;
+      }
+    }
+    blackMids.remove(mid);
+  }
+
+  /// Stores the new owners.
+  void writeBack() {
+    for (final MapEntry(key: rule, value: owned) in _owned.entries) {
+      rule.owned = owned.toList();
     }
   }
 }

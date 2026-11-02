@@ -16,6 +16,7 @@ import 'package:PiliPlus/services/account_service.dart';
 import 'package:PiliPlus/services/download/download_service.dart';
 import 'package:PiliPlus/services/logger.dart';
 import 'package:PiliPlus/services/service_locator.dart';
+import 'package:PiliPlus/utils/black_mid_reasons.dart';
 import 'package:PiliPlus/utils/black_mid_rules.dart';
 import 'package:PiliPlus/utils/end_edge_back_gesture.dart';
 import 'package:PiliPlus/utils/cache_manager.dart';
@@ -109,6 +110,7 @@ void main() async {
   EndEdgeBackGesture.init();
   // refresh online UID rule lists in the background (at most once a day)
   unawaited(BlackMidRules.autoUpdate());
+  unawaited(BlackMidReasons.preload());
   await Future.wait([
     _initDownPath(),
     _initTmpPath(),

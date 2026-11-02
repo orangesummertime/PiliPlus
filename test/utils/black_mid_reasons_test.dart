@@ -29,6 +29,7 @@ void main() {
         ].map((e) => e.toJson()).toList(),
       ),
     );
+    await BlackMidReasons.preload();
   });
 
   tearDownAll(() async {

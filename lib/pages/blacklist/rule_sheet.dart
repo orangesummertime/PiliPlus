@@ -34,13 +34,20 @@ class _RuleSheet extends StatefulWidget {
 }
 
 class _RuleSheetState extends State<_RuleSheet> {
-  List<BlackMidRule> _rules = BlackMidRules.load();
+  List<BlackMidRule> _rules = BlackMidRules.loaded ?? const [];
 
   /// urls being updated; empty string means "all"
   final Set<String> _busy = {};
 
-  void _reload() {
-    if (mounted) setState(() => _rules = BlackMidRules.load());
+  @override
+  void initState() {
+    super.initState();
+    if (BlackMidRules.loaded == null) _reload();
+  }
+
+  Future<void> _reload() async {
+    final rules = await BlackMidRules.load();
+    if (mounted) setState(() => _rules = rules);
   }
 
   Future<void> _run(String key, Future<String?> Function() action) async {

@@ -141,4 +141,29 @@ void main() {
     expect(BlackMidRules.normalizeUrl('ftp://a.com/x.txt'), isNull);
     expect(BlackMidRules.normalizeUrl('not a url'), isNull);
   });
+
+  test('30 万条的名单：解析、合并、两条大名单互相收回都很快', () {
+    final text = StringBuffer();
+    for (var i = 1; i <= 300000; i++) {
+      text.writeln(i.isEven ? '$i #原因$i' : '$i');
+    }
+    final sw = Stopwatch()..start();
+    final parsed = BlackMidRules.parseWithReasons(text.toString());
+    expect(parsed.mids.length, 300000);
+    expect(parsed.reasons.length, 150000);
+
+    final blackMids = <int>{};
+    final a = BlackMidRule(url: 'a');
+    final b = BlackMidRule(url: 'b');
+    final rules = [a, b];
+    BlackMidRules.apply(a, parsed.mids, rules, blackMids);
+    BlackMidRules.apply(b, parsed.mids, rules, blackMids);
+    // a drops everything: b still lists them, so b takes them over
+    BlackMidRules.apply(a, {}, rules, blackMids);
+    expect(blackMids.length, 300000);
+    expect(b.owned.length, 300000);
+    BlackMidRules.release(b, rules..remove(a), blackMids);
+    expect(blackMids, isEmpty);
+    expect(sw.elapsed, lessThan(const Duration(seconds: 10)));
+  });
 }

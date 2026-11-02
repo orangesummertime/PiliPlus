@@ -21,11 +21,23 @@ abstract final class BlackMidReasons {
     };
   }
 
-  static Map<int, ({String reason, String url})> get _ruleMap => _rules ??= {
-    for (final rule in BlackMidRules.load().reversed)
-      for (final e in rule.reasons.entries)
-        e.key: (reason: e.value, url: rule.url),
-  };
+  static Map<int, ({String reason, String url})> get _ruleMap {
+    if (_rules case final map?) return map;
+    // not loaded yet: see [preload]
+    final rules = BlackMidRules.loaded;
+    if (rules == null) return const {};
+    return _rules = {
+      for (final rule in rules.reversed)
+        for (final e in rule.reasons.entries)
+          e.key: (reason: e.value, url: rule.url),
+    };
+  }
+
+  /// Loads the online rules (in the background) so their reasons are known.
+  static Future<void> preload() async {
+    await BlackMidRules.load();
+    invalidateRules();
+  }
 
   /// The reason for [mid] and where it came from (`url` is null for a
   /// manually added one), or null if there is none.
