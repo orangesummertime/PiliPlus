@@ -8,6 +8,7 @@ import 'package:PiliPlus/utils/black_mid_store.dart';
 import 'package:PiliPlus/utils/global_data.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 
@@ -68,6 +69,7 @@ void main() {
     BlackMidRules.debugReset();
     await GStorage.localCache.clear();
     GlobalData().blackMids.clear();
+    GlobalData().whiteMids.clear();
   });
 
   tearDownAll(() async {
@@ -334,5 +336,32 @@ void main() {
       jsonDecode(GStorage.localCache.get('blackMidRules') as String).single,
       isNot(contains('mids')),
     );
+  });
+
+  group('白名单', () {
+    late _Server server;
+    setUp(() async => server = await _Server.start());
+    tearDown(() => server.close());
+
+    test('优先于本地黑名单和在线规则；手动拉黑会移出白名单', () async {
+      server.files['/uids.txt'] = utf8.encode('1\n2\n');
+      await BlackMidRules.addAndUpdate([server.url('/uids.txt')]);
+      Pref.setBlackMid(3);
+      expect([1, 2, 3].map(GlobalData().isBlackMid), [true, true, true]);
+
+      Pref.setWhiteMid(1);
+      Pref.setWhiteMid(3);
+      expect([1, 2, 3].map(GlobalData().isBlackMid), [false, true, false]);
+      expect(GStorage.localCache.get(LocalCacheKey.whiteMids), {1, 3});
+      // the blacklist itself is kept
+      expect(GlobalData().blackMids, {3});
+
+      Pref.setBlackMid(1);
+      expect(GlobalData().whiteMids, {3});
+      expect(GlobalData().isBlackMid(1), isTrue);
+
+      Pref.removeWhiteMid(3);
+      expect(GlobalData().isBlackMid(3), isTrue);
+    });
   });
 }

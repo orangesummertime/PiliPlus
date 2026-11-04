@@ -23,6 +23,7 @@ import 'package:PiliPlus/utils/extension/num_ext.dart';
 import 'package:PiliPlus/utils/feed_back.dart';
 import 'package:PiliPlus/utils/filtering_text.dart';
 import 'package:PiliPlus/utils/image_utils.dart';
+import 'package:PiliPlus/utils/search_purify.dart';
 import 'package:PiliPlus/utils/path_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
@@ -127,6 +128,34 @@ List<SettingsModel> get extraSettings => [
     leading: Icon(Icons.history),
     setKey: SettingBoxKey.recordSearchHistory,
     defaultVal: true,
+  ),
+  SwitchModel(
+    title: '搜索结果强相关',
+    subtitle: '视频标题须包含搜索词，或其中任意两个连续的字，否则隐藏',
+    leading: const Icon(Icons.manage_search),
+    setKey: SettingBoxKey.searchPurifyRelevance,
+    defaultVal: true,
+    onChanged: (value) => SearchPurify.relevance = value,
+  ),
+  SwitchModel(
+    title: '搜索结果屏蔽词库',
+    subtitle:
+        '隐藏标题含擦边、标题党、烂梗、辱骂、引流带货等词的视频；'
+        '搜索词本身包含的词不屏蔽。词库来自 bilibili-search-purify',
+    leading: const Icon(Icons.cleaning_services_outlined),
+    setKey: SettingBoxKey.searchPurifyBanWords,
+    defaultVal: true,
+    onChanged: (value) => SearchPurify.banWords = value,
+  ),
+  getBanWordModel(
+    title: '搜索结果标题关键词过滤',
+    key: SettingBoxKey.banWordForSearch,
+    onChanged: (value) => SearchPurify.titleRegExp = value,
+  ),
+  getBanWordModel(
+    title: '搜索结果UP主昵称过滤',
+    key: SettingBoxKey.banWordForSearchUp,
+    onChanged: (value) => SearchPurify.upRegExp = value,
   ),
   SwitchModel(
     title: '预览 Live Photo',

@@ -16,6 +16,8 @@ import 'package:PiliPlus/pages/blacklist/controller.dart';
 import 'package:PiliPlus/pages/blacklist/rule_sheet.dart';
 import 'package:PiliPlus/utils/black_mid_reasons.dart';
 import 'package:PiliPlus/utils/date_utils.dart';
+import 'package:PiliPlus/utils/global_data.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/utils.dart';
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -25,6 +27,7 @@ import 'package:material_ui/material_ui.dart';
 enum _BlockType implements EnumWithLabel {
   local('本地'),
   online('在线'),
+  white('白名单'),
   ;
 
   @override
@@ -85,6 +88,7 @@ class _BlackListPageState extends State<BlackListPage>
                     (e) => switch (e) {
                       _BlockType.local => _local,
                       _BlockType.online => _online,
+                      _BlockType.white => _white,
                     },
                   )
                   .toList(),
@@ -92,6 +96,64 @@ class _BlackListPageState extends State<BlackListPage>
           ),
         ],
       ),
+    );
+  }
+
+  /// The local whitelist: never treated as blocked.
+  Widget get _white {
+    final mids = GlobalData().whiteMids.toList(growable: false);
+    final outline = Theme.of(context).colorScheme.outline;
+    return CustomScrollView(
+      key: const PageStorageKey(_BlockType.white),
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: [
+        ViewSliverSafeArea(
+          sliver: SliverMainAxisGroup(
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const .fromLTRB(16, 12, 16, 4),
+                  child: Text(
+                    mids.isEmpty
+                        ? '白名单里的用户不会被本地黑名单和在线规则屏蔽。'
+                              '在「已拉黑」旁的 ⓘ 或用户主页右上角菜单中添加'
+                        : '共 ${mids.length} 个 · 优先于本地黑名单和在线规则 · 长按移除',
+                    style: TextStyle(fontSize: 13, color: outline),
+                  ),
+                ),
+              ),
+              SliverFixedExtentList.builder(
+                itemExtent: 48,
+                itemCount: mids.length,
+                itemBuilder: (context, index) {
+                  final mid = mids[mids.length - 1 - index];
+                  return InkWell(
+                    onTap: () => Get.toNamed('/member?mid=$mid'),
+                    onLongPress: () => showConfirmDialog(
+                      context: context,
+                      title: Text('将 $mid 移出白名单？'),
+                      onConfirm: () {
+                        Pref.removeWhiteMid(mid);
+                        setState(() {});
+                      },
+                    ),
+                    child: Padding(
+                      padding: const .symmetric(horizontal: 16),
+                      child: Align(
+                        alignment: .centerLeft,
+                        child: Text(
+                          '$mid',
+                          style: const TextStyle(fontSize: 15),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

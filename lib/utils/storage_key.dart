@@ -94,6 +94,10 @@ abstract final class SettingBoxKey {
       horizontalPreview = 'horizontalPreview',
       banWordForReply = 'banWordForReply',
       banWordForReplyUser = 'banWordForReplyUser',
+      searchPurifyRelevance = 'searchPurifyRelevance',
+      searchPurifyBanWords = 'searchPurifyBanWords',
+      banWordForSearch = 'banWordForSearch',
+      banWordForSearchUp = 'banWordForSearchUp',
       banWordForZone = 'banWordForZone',
       savedRcmdTip = 'savedRcmdTip',
       openInBrowser = 'openInBrowser',
@@ -264,6 +268,7 @@ abstract final class SettingBoxKey {
 abstract final class LocalCacheKey {
   static const String historyPause = 'historyPause',
       blackMids = 'blackMids',
+      whiteMids = 'whiteMids',
       danmakuFilterRules = 'danmakuFilterRules',
       mixinKey = 'mixinKey',
       timeStamp = 'timeStamp';

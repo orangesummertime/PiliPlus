@@ -145,6 +145,14 @@ abstract final class BlackMidRules {
     return false;
   }
 
+  /// The URL of the first rule that lists [mid].
+  static String? sourceOf(int mid) {
+    for (final MapEntry(key: url, value: store) in _stores.entries) {
+      if (store.contains(mid)) return url;
+    }
+    return null;
+  }
+
   /// The reason a rule gives for [mid], and that rule's URL.
   static ({String reason, String url})? reasonOf(int mid) {
     for (final MapEntry(key: url, value: store) in _stores.entries) {

@@ -9,6 +9,7 @@ import 'package:PiliPlus/utils/app_scheme.dart';
 import 'package:PiliPlus/utils/date_utils.dart';
 import 'package:PiliPlus/utils/extension/context_ext.dart';
 import 'package:PiliPlus/utils/id_utils.dart';
+import 'package:PiliPlus/utils/search_purify.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
@@ -75,7 +76,27 @@ class SearchVideoController
 
   @override
   List<SearchVideoItemModel>? getDataList(SearchVideoData response) {
-    return response.list;
+    final list = response.list;
+    if (list == null || list.isEmpty) return list;
+    final kept = SearchPurify.filter(list, keyword, isFirst: page == 1);
+    _pageFilteredOut = kept.isEmpty;
+    return kept;
+  }
+
+  /// The last page had results, but all of them were purified away.
+  bool _pageFilteredOut = false;
+
+  @override
+  Future<void> queryData([bool isRefresh = true]) async {
+    _pageFilteredOut = false;
+    await super.queryData(isRefresh);
+    // an empty page would end the list; go on with the next pages instead
+    for (var i = 0; i < 5 && _pageFilteredOut; i++) {
+      _pageFilteredOut = false;
+      page++;
+      isEnd = false;
+      await super.queryData(false);
+    }
   }
 
   final Rx<ArchiveFilterType> selectedType = ArchiveFilterType.totalrank.obs;

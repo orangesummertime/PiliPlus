@@ -16,9 +16,16 @@ class GlobalData {
   /// are kept apart, see [isBlackMid].
   Set<int> blackMids = Pref.blackMids;
 
-  /// Whether [mid] is blocked locally or by an online UID rule.
+  /// UIDs never treated as blocked: the whitelist beats the local blacklist
+  /// and the online rule lists.
+  Set<int> whiteMids = Pref.whiteMids;
+
+  /// Whether [mid] is blocked locally or by an online UID rule, and not
+  /// whitelisted.
   bool isBlackMid(Object? mid) =>
-      mid is int && (blackMids.contains(mid) || BlackMidRules.contains(mid));
+      mid is int &&
+      !whiteMids.contains(mid) &&
+      (blackMids.contains(mid) || BlackMidRules.contains(mid));
 
   bool dynamicsWaterfallFlow = Pref.dynamicsWaterfallFlow;
 

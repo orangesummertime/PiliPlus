@@ -1,11 +1,15 @@
 import 'package:PiliPlus/common/widgets/badge.dart';
 import 'package:PiliPlus/utils/black_mid_reasons.dart';
+import 'package:PiliPlus/utils/black_mid_rules.dart';
+import 'package:PiliPlus/utils/global_data.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
-/// The 已拉黑 badge; with a known reason, followed by an icon that shows it.
+/// The 已拉黑 badge. When the UID is blocked locally or by an online rule,
+/// it is followed by an icon that shows why and lets you whitelist it.
 class BlackMidBadge extends StatelessWidget {
   const BlackMidBadge({super.key, required this.mid});
 
@@ -20,11 +24,11 @@ class BlackMidBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final info = BlackMidReasons.of(mid);
-    if (info == null) return _badge;
+    // blocked on the account only (server side): nothing to explain here
+    if (!GlobalData().isBlackMid(mid)) return _badge;
     return GestureDetector(
       behavior: .opaque,
-      onTap: () => showBlackMidReason(context, info),
+      onTap: () => showBlackMidInfo(context, mid),
       child: Row(
         spacing: 2,
         mainAxisSize: .min,
@@ -41,11 +45,15 @@ class BlackMidBadge extends StatelessWidget {
   }
 }
 
-void showBlackMidReason(
-  BuildContext context,
-  ({String reason, String? url}) info,
-) {
+/// Why [mid] is blocked (reason and source), with a button to whitelist it.
+void showBlackMidInfo(BuildContext context, int mid) {
   final theme = Theme.of(context);
+  final info = BlackMidReasons.of(mid);
+  final url = info == null
+      ? (GlobalData().blackMids.contains(mid)
+            ? null
+            : BlackMidRules.sourceOf(mid))
+      : info.url;
   showDialog(
     context: context,
     builder: (context) => AlertDialog(
@@ -55,9 +63,15 @@ void showBlackMidReason(
         crossAxisAlignment: .start,
         spacing: 12,
         children: [
-          SelectableText(info.reason, style: theme.textTheme.bodyLarge),
+          if (info == null)
+            Text(
+              '没有填写原因',
+              style: TextStyle(color: theme.colorScheme.outline),
+            )
+          else
+            SelectableText(info.reason, style: theme.textTheme.bodyLarge),
           Text(
-            info.url == null ? '来源：本地添加' : '来源：在线规则 ${info.url}',
+            url == null ? '来源：本地黑名单' : '来源：在线规则 $url',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.outline,
             ),
@@ -65,12 +79,21 @@ void showBlackMidReason(
         ],
       ),
       actions: [
+        if (info != null)
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: info.reason));
+              SmartDialog.showToast('已复制');
+            },
+            child: const Text('复制'),
+          ),
         TextButton(
           onPressed: () {
-            Clipboard.setData(ClipboardData(text: info.reason));
-            SmartDialog.showToast('已复制');
+            Get.back();
+            Pref.setWhiteMid(mid);
+            SmartDialog.showToast('已加入白名单，刷新后生效');
           },
-          child: const Text('复制'),
+          child: const Text('加入白名单'),
         ),
         TextButton(onPressed: Get.back, child: const Text('确定')),
       ],

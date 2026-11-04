@@ -39,9 +39,11 @@ import 'package:PiliPlus/utils/cache_manager.dart';
 import 'package:PiliPlus/utils/date_utils.dart';
 import 'package:PiliPlus/utils/extension/context_ext.dart';
 import 'package:PiliPlus/utils/extension/string_ext.dart';
+import 'package:PiliPlus/utils/global_data.dart';
 import 'package:PiliPlus/utils/num_utils.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/utils.dart';
 import 'package:extended_nested_scroll_view/extended_nested_scroll_view.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -334,6 +336,17 @@ class _MemberPageState extends State<MemberPage> {
     );
   }
 
+  /// The local whitelist beats the local blacklist and online UID rules.
+  void _toggleWhiteMid() {
+    if (GlobalData().whiteMids.contains(_mid)) {
+      Pref.removeWhiteMid(_mid);
+      SmartDialog.showToast('已移出白名单');
+    } else {
+      Pref.setWhiteMid(_mid);
+      SmartDialog.showToast('已加入白名单，不再被本地黑名单和在线规则屏蔽');
+    }
+  }
+
   List<Widget> _actions(ColorScheme theme) => [
     if (_userController.reserves?.isNotEmpty ?? false)
       _reserveBtn(_userController.reserves!, theme),
@@ -357,6 +370,19 @@ class _MemberPageState extends State<MemberPage> {
                 const SizedBox(width: 10),
                 Text(
                   _userController.relation.value != 128 ? '加入黑名单' : '移除黑名单',
+                ),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            onTap: _toggleWhiteMid,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.verified_user_outlined, size: 19),
+                const SizedBox(width: 10),
+                Text(
+                  GlobalData().whiteMids.contains(_mid) ? '移出白名单' : '加入白名单',
                 ),
               ],
             ),

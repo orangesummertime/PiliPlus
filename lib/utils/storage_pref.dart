@@ -74,10 +74,29 @@ abstract final class Pref {
     defaultValue: RuleFilter.empty(),
   );
 
-  static void setBlackMid(int mid) => _localCache.put(
-    LocalCacheKey.blackMids,
-    GlobalData().blackMids..add(mid),
+  /// Blocking someone by hand also takes them off the whitelist, which
+  /// would otherwise win.
+  static void setBlackMid(int mid) {
+    removeWhiteMid(mid);
+    _localCache.put(
+      LocalCacheKey.blackMids,
+      GlobalData().blackMids..add(mid),
+    );
+  }
+
+  static Set<int> get whiteMids =>
+      _localCache.get(LocalCacheKey.whiteMids, defaultValue: <int>{});
+
+  static void setWhiteMid(int mid) => _localCache.put(
+    LocalCacheKey.whiteMids,
+    GlobalData().whiteMids..add(mid),
   );
+
+  static void removeWhiteMid(int mid) {
+    if (GlobalData().whiteMids.remove(mid)) {
+      _localCache.put(LocalCacheKey.whiteMids, GlobalData().whiteMids);
+    }
+  }
 
   static void removeBlackMid(int mid) {
     BlackMidReasons.setLocal(mid, null);
@@ -291,6 +310,18 @@ abstract final class Pref {
 
   static String get banWordForReply =>
       _setting.get(SettingBoxKey.banWordForReply, defaultValue: '');
+
+  static bool get searchPurifyRelevance =>
+      _setting.get(SettingBoxKey.searchPurifyRelevance, defaultValue: true);
+
+  static bool get searchPurifyBanWords =>
+      _setting.get(SettingBoxKey.searchPurifyBanWords, defaultValue: true);
+
+  static String get banWordForSearch =>
+      _setting.get(SettingBoxKey.banWordForSearch, defaultValue: '');
+
+  static String get banWordForSearchUp =>
+      _setting.get(SettingBoxKey.banWordForSearchUp, defaultValue: '');
 
   static String get banWordForReplyUser =>
       _setting.get(SettingBoxKey.banWordForReplyUser, defaultValue: '');
