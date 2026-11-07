@@ -3,8 +3,7 @@ import 'dart:math' show ln2, log, max, min;
 import 'package:PiliPlus/common/widgets/colored_box_transition.dart';
 import 'package:PiliPlus/common/widgets/flutter/text_field/controller.dart';
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
-    show MainListReply, ReplyInfo, SubjectControl, Mode;
-import 'package:PiliPlus/grpc/bilibili/pagination.pb.dart';
+    show MainListReply, ReplyInfo, SubjectControl, Mode, CursorReply;
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/http/reply.dart';
 import 'package:PiliPlus/models/common/reply/reply_sort_type.dart';
@@ -115,9 +114,8 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
   final savedReplies = <Object, List<RichTextItem>?>{};
 
   Int64? upMid;
-  Int64? cursorNext;
+  String? nextOffset;
   SubjectControl? subjectControl;
-  FeedPaginationReply? paginationReply;
   late bool hasUpTop = false;
 
   @override
@@ -197,39 +195,37 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
   final classicHotExpanded = false.obs;
   final classicHotLoading = false.obs;
   bool classicHotEnd = true;
-  Int64? _classicHotCursor;
+  String? _classicHotOffset;
 
   void _clearClassic() {
     classicHot.clear();
     classicUpTop.value = null;
     classicHotExpanded.value = false;
     classicHotEnd = true;
-    _classicHotCursor = null;
+    _classicHotOffset = null;
   }
 
   /// Requests a page of hot replies without touching the paging state of the
   /// main (by time) list.
-  Future<MainListReply?> _fetchHotPage(Int64? cursor) async {
+  Future<MainListReply?> _fetchHotPage(String? offset) async {
     final savedMode = mode;
-    final savedCursor = cursorNext;
-    final savedPagination = paginationReply;
+    final savedOffset = nextOffset;
     mode = Mode.MAIN_LIST_HOT;
-    cursorNext = cursor;
-    paginationReply = null;
+    nextOffset = offset;
     try {
       final res = await customGetData();
       if (res case Success(:final response)) {
         final data = response as MainListReply;
         _removeIntro(data);
-        _classicHotCursor = data.cursor.next;
-        classicHotEnd = data.cursor.isEnd;
+        final next = data.paginationReply.nextOffset;
+        classicHotEnd = data.cursor.isEnd || next.isEmpty || next == offset;
+        _classicHotOffset = next;
         return data;
       }
       return null;
     } finally {
       mode = savedMode;
-      cursorNext = savedCursor;
-      paginationReply = savedPagination;
+      nextOffset = savedOffset;
     }
   }
 
@@ -275,7 +271,7 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
     }
     if (classicHotEnd || classicHotLoading.value) return;
     classicHotLoading.value = true;
-    final data = await _fetchHotPage(_classicHotCursor);
+    final data = await _fetchHotPage(_classicHotOffset);
     classicHotLoading.value = false;
     if (data != null && isClassic) {
       final ids = {for (final e in classicHot) e.id};
@@ -331,6 +327,9 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
   }
 
   @override
+  bool get endIfNullOrEmpty => false;
+
+  @override
   void checkIsEnd(int length) {
     final count = this.count.value;
     if (count != -1 && length >= count) {
@@ -354,12 +353,9 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
   @override
   bool customHandleResponse(bool isRefresh, Success<R> response) {
     final data = response.response as MainListReply;
-    cursorNext = data.cursor.next;
-    paginationReply = data.paginationReply;
     count.value = data.subjectControl.count.toInt();
     if (isRefresh) {
-      subjectControl = data.subjectControl;
-      upMid = data.subjectControl.upMid;
+      handleSubjectControl(data.subjectControl);
       if (isClassic) {
         // the pinned reply leads the classic head, above the hot replies
         hasUpTop = false;
@@ -371,7 +367,11 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
         sortType.value = .select;
       }
     }
-    isEnd = data.cursor.isEnd;
+
+    handlePagination(
+      cursor: data.cursor,
+      offset: data.paginationReply.nextOffset,
+    );
 
     _removeIntro(data);
     _pageFilteredOut = data.replies.isEmpty && !data.cursor.isEnd;
@@ -379,12 +379,21 @@ abstract class ReplyController<R> extends CommonListController<R, ReplyInfo> {
     return false;
   }
 
+  void handlePagination({required CursorReply cursor, required String offset}) {
+    if (cursor.isEnd || offset.isEmpty || nextOffset == offset) isEnd = true;
+    nextOffset = offset;
+  }
+
+  void handleSubjectControl(SubjectControl control) {
+    subjectControl = control;
+    upMid = control.upMid;
+  }
+
   @override
   Future<void> onRefresh() {
     _floorResolver?.restart();
-    cursorNext = null;
+    nextOffset = null;
     subjectControl = null;
-    paginationReply = null;
     return super.onRefresh();
   }
 

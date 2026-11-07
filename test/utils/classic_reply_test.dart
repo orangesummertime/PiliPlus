@@ -7,6 +7,7 @@ import 'package:PiliPlus/pages/common/reply/reply_controller.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
 import 'package:fixnum/fixnum.dart';
+import 'package:PiliPlus/grpc/bilibili/pagination.pb.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 
@@ -23,6 +24,7 @@ MainListReply _page(
 }) => MainListReply(
   replies: ids.map(_reply),
   cursor: CursorReply(next: Int64(next), isEnd: end),
+  paginationReply: FeedPaginationReply(nextOffset: end ? '' : '$next'),
   upTop: upTop == null ? null : _reply(upTop),
   subjectControl: SubjectControl(count: Int64(total)),
 );
@@ -63,7 +65,7 @@ class _Controller extends ReplyController<MainListReply> {
 
   @override
   Future<LoadingState<MainListReply>> customGetData() async {
-    final page = (cursorNext ?? Int64.ZERO).toInt();
+    final page = int.tryParse(nextOffset ?? '') ?? 0;
     final hot = mode == Mode.MAIN_LIST_HOT;
     requests.add('${hot ? 'hot' : 'time'}:$page');
     final base = (hot ? 100 : 0) + page * 10;

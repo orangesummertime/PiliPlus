@@ -49,7 +49,6 @@ abstract class CommonDynController extends ReplyController<MainListReply>
     oid: oid,
     rpid: rootRpId,
     mode: mode,
-    cursorNext: cursorNext,
-    offset: paginationReply?.nextOffset,
+    offset: nextOffset,
   );
 }
