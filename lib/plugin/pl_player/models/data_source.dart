@@ -12,7 +12,13 @@ sealed class DataSource {
 }
 
 class NetworkSource extends DataSource {
+  /// All CDN addresses of the chosen video / audio stream, for the
+  /// thread-ripper engine (null: not accelerated).
+  final List<String>? videoCandidates;
+  final List<String>? audioCandidates;
   NetworkSource({
+    this.videoCandidates,
+    this.audioCandidates,
     required super.videoSource,
     required super.audioSource,
   });

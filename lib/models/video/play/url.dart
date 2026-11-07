@@ -56,6 +56,10 @@ class PlayUrlModel {
   String? curLanguage;
   Language? language;
   List<SegmentItemModel>? clipInfoList;
+  // Episode flags (pgc video_info); overseas acceleration leaves these
+  // episodes alone. From lemonteaau/PiliPlus.
+  bool isDrm = false;
+  bool isPreview = false;
 
   @pragma('vm:notify-debugger-on-exception')
   int get missingVideoQualityBelowHighest {
@@ -107,6 +111,8 @@ class PlayUrlModel {
     language = json['language'] == null
         ? null
         : Language.fromJson(json['language']);
+    isDrm = _flag(json['is_drm']);
+    isPreview = _flag(json['is_preview']);
     // debug
     // final clipInfoList = [
     //   {
@@ -131,6 +137,10 @@ class PlayUrlModel {
       if (kDebugMode) rethrow;
     }
   }
+
+  // The API sends these as booleans or 0/1.
+  static bool _flag(Object? value) =>
+      value == true || (value is num && value != 0);
 }
 
 class Language {

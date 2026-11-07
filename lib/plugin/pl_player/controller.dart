@@ -30,6 +30,8 @@ import 'package:PiliPlus/plugin/pl_player/models/video_fit_type.dart';
 import 'package:PiliPlus/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:PiliPlus/plugin/pl_player/utils/fullscreen.dart';
 import 'package:PiliPlus/services/service_locator.dart';
+import 'package:PiliPlus/services/thread_ripper/auto_concurrency.dart';
+import 'package:PiliPlus/services/thread_ripper/range_proxy.dart';
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/android/android_helper.dart';
 import 'package:PiliPlus/utils/android/bindings.g.dart';
@@ -794,6 +796,15 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     }
   }
 
+  // thread-ripper engine (lemonteaau/PiliPlus): a loopback proxy per opened
+  // stream, fed with all CDN addresses of it
+  RipperRangeProxy? _ripperProxy;
+  final _ripperAutoConcurrency = RipperAutoConcurrency();
+  int _ripperGeneration = 0;
+  // A seek or (re)open restarts playback. Its buffering is not a download
+  // stall; cleared once buffering ends.
+  bool _ripperRestarting = false;
+
   String? shadersDirPath;
   Future<String> get copyShadersToExternalDirectory async {
     if (shadersDirPath != null) {
@@ -934,8 +945,48 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       'video-rotate': ?rotate?.toString(),
     };
 
+    final generation = ++_ripperGeneration;
+    _ripperProxy?.close();
+    _ripperProxy = null;
     String video = dataSource.videoSource;
-    if (dataSource.audioSource case final audio? when (audio.isNotEmpty)) {
+    String? audioSource = dataSource.audioSource;
+    if (!isLive &&
+        dataSource is NetworkSource &&
+        dataSource.videoCandidates?.isNotEmpty == true &&
+        Pref.threadRipperEnabled) {
+      final proxy = RipperRangeProxy(
+        concurrency: Pref.threadRipperConcurrency,
+        overseas: Pref.threadRipperOverseas,
+        customHosts: Pref.threadRipperCustomHosts,
+        autoConcurrency: Pref.threadRipperAutoConcurrency
+            ? _ripperAutoConcurrency
+            : null,
+        userAgent: BrowserUa.pc,
+      );
+      _ripperProxy = proxy;
+      try {
+        await proxy.start();
+        if (generation != _ripperGeneration || _playerCount == 0) {
+          proxy.close();
+          return;
+        }
+        video = proxy.register(dataSource.videoCandidates!);
+        if (audioSource?.isNotEmpty == true &&
+            dataSource.audioCandidates?.isNotEmpty == true) {
+          audioSource = proxy.register(
+            dataSource.audioCandidates!,
+            isAudio: true,
+          );
+        }
+      } catch (_) {
+        proxy.close();
+        if (generation != _ripperGeneration || _playerCount == 0) return;
+        _ripperProxy = null;
+        video = dataSource.videoSource;
+        audioSource = dataSource.audioSource;
+      }
+    }
+    if (audioSource case final audio? when (audio.isNotEmpty)) {
       if (onlyPlayAudio.value) {
         video = audio;
       } else {
@@ -953,6 +1004,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     }
 
     assert(!isLive || seekTo == null);
+    _ripperRestarting = true;
     await player.open(
       Media(
         video,
@@ -970,6 +1022,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     if (_videoPlayerController case final ctr? when (ctr.current.isNotEmpty)) {
       var media = ctr.current.last;
       if (!isLive) media = media.copyWith(start: ctr.state.position);
+      _ripperRestarting = true;
       return ctr.open(media, play: true);
     }
     return null;
@@ -1082,6 +1135,11 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
 
       /// position
       stream.position.listen((Duration position) {
+        _ripperProxy?.autoConcurrency?.buffer(
+          (player.state.buffer - position).inMilliseconds / 1000,
+          player.state.playing && !_ripperRestarting,
+          cacheFull: () => player.getProperty('demuxer-cache-idle') == 'yes',
+        );
         final posInSeconds = position.inSeconds;
 
         if (posInSeconds != this.position.value) {
@@ -1106,6 +1164,14 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         buffered.value = buffer.inSeconds;
       }),
       stream.buffering.listen((bool buffering) {
+        if (buffering &&
+            !isBuffering.value &&
+            !_ripperRestarting &&
+            player.state.playing &&
+            player.state.position > Duration.zero) {
+          _ripperProxy?.autoConcurrency?.stall();
+        }
+        if (!buffering) _ripperRestarting = false;
         isBuffering.value = buffering;
         if (!playerStatus.isCompleted) {
           _stopWakeLockTimer();
@@ -1137,6 +1203,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
           return;
         }
         if (event.startsWith("Failed to open https://") ||
+            // overseas acceleration serves DASH through a loopback proxy
+            event.startsWith("Failed to open http://127.0.0.1:") ||
             event.startsWith("Can not open external file https://") ||
             //tcp: ffurl_read returned 0xdfb9b0bb
             //tcp: ffurl_read returned 0xffffff99
@@ -1199,6 +1267,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     }
     danmakuController?.clear();
     try {
+      _ripperRestarting = true;
       await _videoPlayerController?.seek(position);
       _updateIOSPip(position);
     } catch (e) {
@@ -1690,6 +1759,9 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     }
 
     _playerCount = 0;
+    _ripperGeneration++;
+    _ripperProxy?.close();
+    _ripperProxy = null;
     if (removeSafeArea) {
       showSystemBar();
     }

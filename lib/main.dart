@@ -96,6 +96,23 @@ Future<void> _initAppPath() async {
 }
 
 void main() async {
+  // third-party code ported into this fork, shown in the license page
+  LicenseRegistry.addLicense(() async* {
+    for (final (packages, file) in const [
+      (['Bilibili-thread-ripper'], 'bilibili-thread-ripper'),
+      (
+        ['Make-Bilibili-Great-Than-Ever-Before'],
+        'make-bilibili-great-than-ever-before',
+      ),
+      (['bilibili-search-purify'], 'bilibili-search-purify'),
+    ]) {
+      yield LicenseEntryWithLineBreaks(
+        packages,
+        await rootBundle.loadString('assets/licenses/$file.txt'),
+      );
+    }
+  });
+
   ScaledWidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   await _initAppPath();

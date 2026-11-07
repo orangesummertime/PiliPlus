@@ -24,6 +24,7 @@ import 'package:PiliPlus/pages/common/common_intro_controller.dart';
 import 'package:PiliPlus/pages/danmaku/danmaku_model.dart';
 import 'package:PiliPlus/pages/setting/models/play_settings.dart'
     show showPlayerVolumeDialog;
+import 'package:PiliPlus/pages/setting/widgets/accel_quick_setting.dart';
 import 'package:PiliPlus/pages/setting/widgets/popup_item.dart';
 import 'package:PiliPlus/pages/setting/widgets/select_dialog.dart';
 import 'package:PiliPlus/pages/video/controller.dart';
@@ -36,6 +37,7 @@ import 'package:PiliPlus/pages/video/widgets/header_mixin.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/plugin/pl_player/models/data_source.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_repeat.dart';
+import 'package:PiliPlus/services/btr_proxy/proxy_server.dart';
 import 'package:PiliPlus/services/shutdown_timer_service.dart'
     show shutdownTimerService, ShutdownPanel;
 import 'package:PiliPlus/utils/accounts.dart';
@@ -507,6 +509,41 @@ class HeaderControlState extends State<HeaderControl>
                 if (!isFileSource)
                   ListTile(
                     dense: true,
+                    title: const Text('海外加速', style: titleStyle),
+                    leading: const Icon(Icons.bolt_outlined, size: 20),
+                    subtitle: Text(
+                      Pref.overseasAccel
+                          ? '已开启 · ${Pref.overseasAccelEngine.label}，点这里调整'
+                          : '已关闭（多线程、多节点并发下载，缓解卡顿）',
+                      style: subTitleStyle,
+                    ),
+                    onTap: () {
+                      // a bottom sheet, like 选择画质: showDialog here has no
+                      // MaterialLocalizations (PiliPlus-BTR, real device logs)
+                      Get.back();
+                      showBottomSheet(
+                        (context, setState) => AccelQuickSettingSheet(
+                          onDone: (action) {
+                            Get.back();
+                            final state = Pref.overseasAccel
+                                ? '已开启 · ${Pref.overseasAccelEngine.label}'
+                                : '已关闭';
+                            if (action == AccelQuickAction.savedAndReload) {
+                              // drop BTR's per-video pools so new settings apply
+                              BtrProxyServer.instance.resetForNewVideo();
+                              SmartDialog.showToast('海外加速$state，正在重载视频');
+                              videoDetailCtr.queryVideoUrl(fromReset: true);
+                            } else {
+                              SmartDialog.showToast('海外加速$state，重新进入视频生效');
+                            }
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                if (!isFileSource)
+                  ListTile(
+                    dense: true,
                     title: const Text('CDN 设置', style: titleStyle),
                     leading: const Icon(MdiIcons.cloudPlusOutline, size: 20),
                     subtitle: Text(
@@ -514,9 +551,13 @@ class HeaderControlState extends State<HeaderControl>
                       style: subTitleStyle,
                     ),
                     onTap: () async {
+                      // the nearest Navigator: the root one of SmartDialog has
+                      // no MaterialLocalizations (PiliPlus-BTR)
+                      final dialogContext = Navigator.of(context).context;
                       Get.back();
+                      if (!dialogContext.mounted) return;
                       final result = await showDialog<CDNService>(
-                        context: context,
+                        context: dialogContext,
                         builder: (context) => CdnSelectDialog(
                           sample: videoInfo.dash?.video?.firstOrNull,
                         ),

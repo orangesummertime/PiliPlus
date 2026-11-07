@@ -51,6 +51,8 @@ import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/plugin/pl_player/models/data_source.dart';
 import 'package:PiliPlus/plugin/pl_player/models/heart_beat_type.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
+import 'package:PiliPlus/services/btr_proxy/proxy_server.dart';
+import 'package:PiliPlus/models/common/video/cdn_type.dart';
 import 'package:PiliPlus/services/download/download_service.dart';
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/connectivity_utils.dart';
@@ -753,6 +755,95 @@ class VideoDetailController extends GetxController
     return null;
   }
 
+  // ---- overseas acceleration ----
+  // Two engines, picked in settings: thread-ripper (from lemonteaau/PiliPlus)
+  // gets every CDN address of the stream and wraps it in the player; BTR
+  // (from nishuodedui1145-del/PiliPlus-BTR) wraps the chosen addresses here.
+
+  // 剧集加速: episodes go through the proxy unless switched off; DRM and
+  // preview-only episodes never do. (lemonteaau/PiliPlus)
+  bool get _accelAllowed =>
+      videoType != VideoType.pgc ||
+      (Pref.threadRipperEpisodeEnabled && !data.isDrm && !data.isPreview);
+
+  Future<NetworkSource> _networkSource() async {
+    final videoUrl = this.videoUrl!;
+    final audioUrl = this.audioUrl;
+    if (Pref.btrEnabled && _accelAllowed) {
+      return _btrNetworkSource(videoUrl, audioUrl);
+    }
+    return NetworkSource(
+      videoSource: videoUrl,
+      audioSource: audioUrl,
+      videoCandidates:
+          data.dash != null &&
+              _accelAllowed &&
+              videoUrl == VideoUtils.getCdnUrl(firstVideo.playUrls)
+          ? firstVideo.playUrls.toList()
+          : null,
+      audioCandidates: data.dash?.audio
+          ?.where(
+            (item) =>
+                item.id == currentAudioQa?.code &&
+                audioUrl == VideoUtils.getCdnUrl(item.playUrls, isAudio: true),
+          )
+          .firstOrNull
+          ?.playUrls
+          .toList(),
+    );
+  }
+
+  /// BTR: the proxy URLs for the chosen addresses (nishuodedui1145-del/
+  /// PiliPlus-BTR, lib/pages/video/controller.dart).
+  Future<NetworkSource> _btrNetworkSource(
+    String videoUrl,
+    String? audioUrl,
+  ) async {
+    bool isHttp(String url) =>
+        url.startsWith('http://') || url.startsWith('https://');
+    final canProxyVideo = isHttp(videoUrl);
+    final canProxyAudio =
+        audioUrl != null && audioUrl.isNotEmpty && isHttp(audioUrl);
+    if (!canProxyVideo && !canProxyAudio) {
+      return NetworkSource(videoSource: videoUrl, audioSource: audioUrl);
+    }
+    final btr = BtrProxyServer.instance
+      ..cdnCandidates = CDNService.values
+          .map((e) => e.host)
+          .whereType<String>()
+          .where((host) => !VideoUtils.isP2pHost(host))
+          .toList()
+      ..cdnRaceEnabled = Pref.btrCdnRace
+      ..setVideoTrack(
+        id: firstVideo.id,
+        bandwidth: firstVideo.bandWidth,
+        width: firstVideo.width,
+        height: firstVideo.height,
+        candidateBandwidths: data.dash?.video
+            ?.map((v) => v.bandWidth)
+            .whereType<int>()
+            .toList(),
+      );
+    try {
+      await btr.ensureStarted();
+    } catch (_) {
+      return NetworkSource(videoSource: videoUrl, audioSource: audioUrl);
+    }
+    return NetworkSource(
+      videoSource: canProxyVideo
+          ? btr.buildProxyUrl(
+              videoUrl,
+              threads: Pref.btrConcurrency,
+              kind: 'video',
+              group: Pref.btrGroup,
+            )
+          : videoUrl,
+      audioSource: canProxyAudio
+          ? btr.buildProxyUrl(audioUrl, threads: 2, kind: 'audio')
+          : audioUrl,
+    );
+  }
+
   Future<void> playerInit({
     bool? autoplay,
     bool autoFullScreenFlag = false,
@@ -768,10 +859,7 @@ class VideoDetailController extends GetxController
               isMp4: entry.mediaType == 1,
               hasDashAudio: entry.hasDashAudio,
             )
-          : NetworkSource(
-              videoSource: videoUrl!,
-              audioSource: audioUrl,
-            ),
+          : await _networkSource(),
       seekTo: seek,
       duration: data.timeLength == null
           ? null
@@ -1294,10 +1382,12 @@ class VideoDetailController extends GetxController
       ..dispose();
     subtitles.clear();
     vttSubtitles.clear();
+    BtrProxyServer.instance.scheduleStop();
     super.onClose();
   }
 
   void onReset({bool isStein = false}) {
+    BtrProxyServer.instance.resetForNewVideo();
     if (isFileSource) {
       cacheLocalProgress();
     }

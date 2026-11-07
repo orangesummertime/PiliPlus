@@ -14,6 +14,8 @@ void main() {
   setUp(() {
     VideoUtils.cdnService = CDNService.akamai;
     VideoUtils.disableAudioCDN = false;
+    // upstream behaviour; PCDN blocking: test/utils/p2p_cdn_test.dart
+    VideoUtils.blockP2p = false;
   });
 
   test('Akamai selects its signed backup without changing any bytes', () {

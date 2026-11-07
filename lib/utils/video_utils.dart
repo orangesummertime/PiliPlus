@@ -13,6 +13,43 @@ abstract final class VideoUtils {
   static String? liveCdnUrl = Pref.liveCdnUrl;
   static bool disableAudioCDN = Pref.disableAudioCDN;
 
+  /// Never pick a P2P / PCDN host (setting 屏蔽 PCDN/P2P 节点).
+  static bool blockP2p = Pref.blockP2pCdn;
+
+  // P2P / PCDN hosts, from Make-Bilibili-Great-Than-Ever-Before
+  // (https://github.com/SukkaW/Make-Bilibili-Great-Than-Ever-Before, MIT,
+  // src/core/player/cdn-classify.ts) and the Surge rules in
+  // https://x.com/gxgexiao/status/2119003466085646646
+  static const _p2pHostKeywords = [
+    '302ppio',
+    '302kodo',
+    '.mcdn.bilivideo',
+    'szbdyd.com',
+    '.nexusedgeio.com',
+    '.ahdohpiechei.com', // 七牛云 PCDN
+    '.mountaintoys.cn',
+    '.bvmlt.top',
+    'smtcdns.net',
+    // mirror type, but its SSL cert is for PCDN (*.bilivideo.cn)
+    'upos-sz-mirror14b.bilivideo.com',
+  ];
+
+  /// Whether [host] is a P2P / PCDN node.
+  static bool isP2pHost(String host) {
+    host = host.toLowerCase();
+    for (final keyword in _p2pHostKeywords) {
+      if (host.contains(keyword)) return true;
+    }
+    final first = host.split('.').first;
+    // upos-sz-302ppio.bilivideo.com, upos-sz-302kodo...: *302* subdomain
+    if (first.contains('302')) return true;
+    // *pcdn*.biliapi.net
+    return first.contains('pcdn') && host.endsWith('.biliapi.net');
+  }
+
+  static bool _isP2pUrl(String url) =>
+      blockP2p && isP2pHost(Uri.tryParse(url)?.host ?? '');
+
   static const _proxyTf = 'proxy-tf-all-ws.bilivideo.com';
 
   static final _mirrorRegex = RegExp(
@@ -30,7 +67,7 @@ abstract final class VideoUtils {
   }) {
     defaultCDNService ??= cdnService;
 
-    if (defaultCDNService == CDNService.baseUrl) {
+    if (defaultCDNService == CDNService.baseUrl && !_isP2pUrl(urls.first)) {
       return urls.first;
     }
 
@@ -45,6 +82,18 @@ abstract final class VideoUtils {
       );
     }
 
+    // audio that does not follow the CDN setting uses the backup URL
+    // (lemonteaau/PiliPlus)
+    final selectedCDNService = isAudio && disableAudioCDN
+        ? CDNService.backupUrl
+        : defaultCDNService;
+    // a replacement host: never a P2P one
+    final replaceHost =
+        selectedCDNService.host != null &&
+            !(blockP2p && isP2pHost(selectedCDNService.host!))
+        ? selectedCDNService.host
+        : null;
+
     String? mcdnTf;
     String? mcdnUpgcxcode;
 
@@ -53,15 +102,15 @@ abstract final class VideoUtils {
       last = url;
       if (_mirrorRegex.hasMatch(url)) {
         final uri = Uri.parse(url);
-        if (uri.queryParameters['os'] == 'mcdn') {
-          // upos-sz-mirrorcoso1.bilivideo.com os=mcdn
-          mcdnUpgcxcode = url;
+        if (uri.queryParameters['os'] == 'mcdn' ||
+            (blockP2p && isP2pHost(uri.host))) {
+          // upos-sz-mirrorcoso1.bilivideo.com os=mcdn, upos-sz-mirror14b
+          mcdnUpgcxcode ??= url;
         } else {
-          if (defaultCDNService == CDNService.backupUrl ||
-              (isAudio && disableAudioCDN)) {
+          if (replaceHost == null) {
             return url;
           }
-          return uri.replace(host: defaultCDNService.host).toString();
+          return uri.replace(host: replaceHost).toString();
         }
       }
 
@@ -72,7 +121,7 @@ abstract final class VideoUtils {
 
       // upos-\w*-302.* & bcache & mcdn host but upgcxcode path
       if (url.contains('/upgcxcode/')) {
-        mcdnUpgcxcode = url;
+        mcdnUpgcxcode ??= url;
         continue;
       }
 
@@ -80,7 +129,7 @@ abstract final class VideoUtils {
       if (url.contains('szbdyd.com')) {
         final uri = Uri.parse(url);
         final hostname =
-            uri.queryParameters['xy_usource'] ?? defaultCDNService.host;
+            uri.queryParameters['xy_usource'] ?? replaceHost ?? uri.host;
         return uri
             .replace(scheme: 'https', host: hostname, port: 443)
             .toString();
@@ -100,12 +149,27 @@ abstract final class VideoUtils {
                   queryParameters: {'url': mcdnTf},
                 ).toString()
         : Uri.parse(mcdnUpgcxcode)
-              .replace(host: defaultCDNService.host ?? CDNService.ali.host)
+              .replace(
+                scheme: 'https',
+                host: replaceHost ?? CDNService.ali.host,
+                port: 443,
+              )
               .toString();
   }
 
   static String getLiveCdnUrl(CodecItem e, {int index = 0}) {
-    final urlInfo = e.urlInfo.getOrFirst(index);
+    var urlInfo = e.urlInfo.getOrFirst(index);
+    // the default line is a PCDN one: take the first official line instead
+    // (a line picked by hand is kept)
+    if (index == 0 && blockP2p && liveCdnUrl == null) {
+      bool p2p(String host) => isP2pHost(Uri.tryParse(host)?.host ?? host);
+      if (p2p(urlInfo.host)) {
+        urlInfo = e.urlInfo.firstWhere(
+          (i) => !p2p(i.host),
+          orElse: () => urlInfo,
+        );
+      }
+    }
     return (liveCdnUrl ?? urlInfo.host) + e.baseUrl + urlInfo.extra;
   }
 

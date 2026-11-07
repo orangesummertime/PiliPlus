@@ -22,6 +22,7 @@ import 'package:PiliPlus/models/common/super_resolution_type.dart';
 import 'package:PiliPlus/models/common/theme/theme_type.dart';
 import 'package:PiliPlus/models/common/video/base_quality.dart';
 import 'package:PiliPlus/models/common/video/cdn_type.dart';
+import 'package:PiliPlus/models/common/video/overseas_accel_engine.dart';
 import 'package:PiliPlus/models/common/video/subtitle_pref_type.dart';
 import 'package:PiliPlus/models/common/video/video_decode_type.dart';
 import 'package:PiliPlus/models/user/danmaku_rule.dart';
@@ -704,6 +705,80 @@ abstract final class Pref {
 
   static bool get disableAudioCDN =>
       _setting.get(SettingBoxKey.disableAudioCDN, defaultValue: false);
+
+  // ---- overseas acceleration ----
+
+  /// Multi-thread download through a loopback proxy (default on).
+  static bool get overseasAccel =>
+      _setting.get(SettingBoxKey.overseasAccel, defaultValue: true);
+
+  /// Which engine: [OverseasAccelEngine.ripper] (lemonteaau/PiliPlus) or
+  /// [OverseasAccelEngine.btr] (nishuodedui1145-del/PiliPlus-BTR).
+  static OverseasAccelEngine get overseasAccelEngine =>
+      OverseasAccelEngine.values.firstWhere(
+        (e) => e.name == _setting.get(SettingBoxKey.overseasAccelEngine),
+        orElse: () => OverseasAccelEngine.ripper,
+      );
+
+  static bool get threadRipperEnabled =>
+      overseasAccel && overseasAccelEngine == OverseasAccelEngine.ripper;
+
+  static bool get btrEnabled =>
+      overseasAccel && overseasAccelEngine == OverseasAccelEngine.btr;
+
+  // thread-ripper (lemonteaau/PiliPlus), defaults as there
+
+  /// 剧集加速: episodes too, unless switched off (DRM / preview never).
+  static bool get threadRipperEpisodeEnabled => _setting.get(
+    SettingBoxKey.threadRipperEpisodeEnabled,
+    defaultValue: true,
+  );
+
+  /// Overseas CDN pool. Off by default: upstream recommends mainland nodes
+  /// for viewers abroad too, as overseas edges don't cache cold videos.
+  static bool get threadRipperOverseas =>
+      _setting.get(SettingBoxKey.threadRipperOverseas, defaultValue: false);
+
+  static bool get threadRipperAutoConcurrency => _setting.get(
+    SettingBoxKey.threadRipperAutoConcurrency,
+    defaultValue: true,
+  );
+
+  static List<String> get threadRipperCustomHosts => List<String>.from(
+    _setting.get(
+      SettingBoxKey.threadRipperCustomHosts,
+      defaultValue: <String>[],
+    ),
+  );
+
+  static const threadRipperConcurrencyValues = [4, 8, 16, 32, 64, 128];
+
+  static int get threadRipperConcurrency {
+    final value = _setting.get(
+      SettingBoxKey.threadRipperConcurrency,
+      defaultValue: 8,
+    );
+    return threadRipperConcurrencyValues.contains(value) ? value as int : 8;
+  }
+
+  // BTR (nishuodedui1145-del/PiliPlus-BTR), defaults as there
+
+  static int get btrConcurrency =>
+      _setting.get(SettingBoxKey.btrConcurrency, defaultValue: 8);
+
+  /// Node group: 'auto' (by measurement) / 'mainland' / 'overseas'.
+  static String get btrGroup =>
+      _setting.get(SettingBoxKey.btrGroup, defaultValue: 'auto');
+
+  /// CDN race on entering a video (default on).
+  static bool get btrCdnRace =>
+      _setting.get(SettingBoxKey.btrCdnRace, defaultValue: true);
+  static set btrCdnRace(bool value) =>
+      _setting.put(SettingBoxKey.btrCdnRace, value);
+
+  /// Never pick P2P / PCDN hosts (default on).
+  static bool get blockP2pCdn =>
+      _setting.get(SettingBoxKey.blockP2pCdn, defaultValue: true);
 
   static int get minDurationForRcmd =>
       _setting.get(SettingBoxKey.minDurationForRcmd, defaultValue: 0);

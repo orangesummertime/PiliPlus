@@ -1,0 +1,1007 @@
+// From lemonteaau/PiliPlus (PiliPlus 海外加速版, GPL-3.0),
+// https://github.com/lemonteaau/PiliPlus/tree/7432a2147ddc
+// itself adapted from MrTangLuyao/Bilibili-thread-ripper (MIT, see
+// assets/licenses/bilibili-thread-ripper.txt). Changes in this fork: P2P / PCDN
+// hosts excluded (VideoUtils.isP2pHost), wired to the overseas acceleration
+// settings.
+// Native download-layer adaptation of Bilibili-thread-ripper (MIT).
+// The existing media_kit player continues to demux, decode, seek and render.
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
+
+import 'package:PiliPlus/services/thread_ripper/auto_concurrency.dart';
+import 'package:PiliPlus/services/thread_ripper/cdn_resolver.dart';
+
+class RipperRangeProxy {
+  RipperRangeProxy({
+    int concurrency = 8,
+    this.overseas = true,
+    this.customHosts = const [],
+    this.autoConcurrency,
+    required this.userAgent,
+    this.referer = 'https://www.bilibili.com/',
+    this.onActiveRequestsChanged,
+  }) : _fixedConcurrency = concurrency,
+       assert(concurrency > 0 && concurrency <= 128);
+
+  final void Function(int active)? onActiveRequestsChanged;
+  final int _fixedConcurrency;
+  final RipperAutoConcurrency? autoConcurrency;
+  int get concurrency => autoConcurrency?.threads ?? _fixedConcurrency;
+  final bool overseas;
+  final List<String> customHosts;
+  final _assignments = RipperAssignments();
+  double _connectionBps = 0;
+  double _pieceMs = 0;
+  // How long a request on this route waits for its response head.
+  double _headMs = 0;
+  int get _hedgeMs =>
+      _pieceMs == 0 ? 900 : (_pieceMs * 1.5).round().clamp(250, 900);
+
+  // Upstream hedgeDue without a playback deadline. The fixed delay alone
+  // copied nearly every piece once the link itself was the limit, as each took
+  // longer than 900 ms; the copies took a third of the bandwidth and playback
+  // stalled. A copy now starts for a first copy that is stopped, slower than
+  // this route's connections, or slower than the copy's node; a copy beside
+  // one on pace only takes bandwidth from the pieces behind it.
+  bool _hedgeDue(_Receiving first, int delayMs, double copyBps) {
+    final ran = first.clock?.elapsedMilliseconds;
+    if (ran == null || ran < delayMs) return false;
+    // A node not measured yet is tried, as the chance of a faster one.
+    if (copyBps == 0 || _connectionBps == 0) return true;
+    // No body yet: heads queue behind the other transfers on a busy link.
+    if (first.received == 0) return ran >= _headMs * 1.5;
+    if (ran - first.lastAt >= delayMs) return true;
+    // Judge the pace over a whole delay of transfer, not the wait for it.
+    final moving = ran - first.firstAt;
+    if (moving < delayMs) return false;
+    final rate = first.received * 1000 / moving;
+    return copyBps > rate * 1.5 || rate < _connectionBps * .6;
+  }
+
+  void _measure(int bytes, Duration elapsed) {
+    if (bytes < 48 * 1024 || elapsed.inMicroseconds <= 0) return;
+    final ms = elapsed.inMicroseconds / 1000;
+    final bps = bytes * 1000 / ms;
+    _connectionBps = _connectionBps == 0 ? bps : _connectionBps * .7 + bps * .3;
+    _pieceMs = _pieceMs == 0 ? ms : _pieceMs * .7 + ms * .3;
+  }
+
+  int _minChunk(int length, int budget, int hosts) {
+    if (_connectionBps == 0) return 64 * 1024;
+    final target = (_connectionBps * .6 / (64 * 1024)).floor() * 64 * 1024;
+    final spread = (length / max(1, min(max(4, hosts), budget))).ceil();
+    return max(64 * 1024, min(1024 * 1024, min(target, spread)));
+  }
+
+  final String userAgent;
+  final String referer;
+  final _tracks = <String, _Track>{};
+  final _bans = RipperBanList();
+  final _jobs = <_Job>{};
+  final _client = HttpClient()
+    ..autoUncompress = false
+    ..connectionTimeout = const Duration(milliseconds: 5500);
+  final _waiters = <_Waiter>[];
+  int _sequence = 0;
+  int _active = 0;
+  int _normalActive = 0;
+  int get _normalLimit => concurrency == 1
+      ? 1
+      : concurrency -
+            max(1, (concurrency / 8).ceil()).clamp(1, concurrency - 1);
+  bool _closed = false;
+  HttpServer? _server;
+  final String _token = List.generate(
+    24,
+    (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0'),
+  ).join();
+
+  Future<void> start() async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    if (_closed) {
+      await server.close(force: true);
+      throw StateError('Download session closed');
+    }
+    _server = server;
+    autoConcurrency?.newSession();
+    autoConcurrency?.onChanged = _drain;
+    // Transport disconnects can also fail response.close(); each request owns
+    // its cleanup in finally, so never leak those errors to the app's zone.
+    server.listen((request) => _serve(request).ignore());
+  }
+
+  String register(Iterable<String> urls, {bool isAudio = false}) {
+    final originals = urls
+        .map(Uri.parse)
+        .where(RipperCdnResolver.supports)
+        .toList();
+    final candidates = RipperCdnResolver.candidates(
+      urls,
+      overseas: overseas,
+      customHosts: customHosts,
+    );
+    return registerCandidates(
+      candidates,
+      originals:
+          customHosts.any(
+            (host) => RipperCdnResolver.normalizeHost(host) != null,
+          )
+          ? candidates
+          : originals,
+      isAudio: isAudio,
+    );
+  }
+
+  // Explicit candidates are used by the loopback regression fixtures.
+  String registerCandidates(
+    List<Uri> urls, {
+    List<Uri>? originals,
+    bool isAudio = false,
+  }) {
+    if (_closed || _server == null || urls.isEmpty) {
+      throw StateError('No download session or media candidates');
+    }
+    final id = '/$_token/${_tracks.length}';
+    _tracks[id] = _Track(
+      RipperCdnResolver(
+        urls,
+        bans: _bans,
+        overseas:
+            overseas ||
+            customHosts.any(
+              (host) => RipperCdnResolver.normalizeHost(host) != null,
+            ),
+        originals: originals,
+      ),
+      isAudio,
+    );
+    return 'http://127.0.0.1:${_server!.port}$id';
+  }
+
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    autoConcurrency?.onChanged = null;
+    autoConcurrency?.demand(0, concurrency, 0);
+    for (final job in _jobs.toList()) {
+      job.cancel();
+    }
+    _client.close(force: true);
+    unawaited(_server?.close(force: true));
+    for (final waiter in _waiters) {
+      if (!waiter.ready.isCompleted) {
+        waiter.ready.completeError(const HttpException('Session closed'));
+      }
+    }
+    _waiters.clear();
+    _tracks.clear();
+  }
+
+  Future<void> _slot(
+    _Job job, {
+    required bool rescue,
+    required int priority,
+  }) async {
+    job.check();
+    if (_closed) throw const HttpException('Download session closed');
+    final waiter = _Waiter(rescue, priority, _sequence++);
+    void cancel() {
+      if (_waiters.remove(waiter)) {
+        waiter.ready.completeError(const HttpException('Download cancelled'));
+      }
+    }
+
+    job._listeners.add(cancel);
+    _waiters.add(waiter);
+    _drain();
+    try {
+      await waiter.ready.future;
+    } finally {
+      job._listeners.remove(cancel);
+    }
+  }
+
+  void _drain() {
+    if (_closed) return;
+    _waiters.sort((a, b) {
+      final priority = b.priority.compareTo(a.priority);
+      return priority != 0 ? priority : a.sequence.compareTo(b.sequence);
+    });
+    while (_active < concurrency) {
+      final index = _waiters.indexWhere(
+        (w) => w.rescue || _normalActive < _normalLimit,
+      );
+      if (index < 0) break;
+      final waiter = _waiters.removeAt(index);
+      _active++;
+      onActiveRequestsChanged?.call(_active);
+      if (!waiter.rescue) _normalActive++;
+      waiter.ready.complete();
+    }
+    autoConcurrency?.demand(_active, concurrency, _waiters.length);
+  }
+
+  void _release({required bool rescue}) {
+    _active--;
+    onActiveRequestsChanged?.call(_active);
+    if (!rescue) _normalActive--;
+    _drain();
+  }
+
+  Future<_Piece> _attempt(
+    _Track track,
+    Uri url,
+    int start,
+    int end,
+    _Job job, {
+    required bool rescue,
+    required int priority,
+    bool clip = false,
+    _Resume? resume,
+    _Receiving? receiving,
+    _Receiving? primary,
+  }) async {
+    await _slot(job, rescue: rescue, priority: priority);
+    HttpClientRequest? request;
+    final clock = Stopwatch()..start();
+    receiving?.clock = clock;
+    Timer? deadline;
+    int status = 0;
+    int received = 0;
+    bool completed = false;
+    try {
+      job.check();
+      // Take a snapshot only after obtaining a slot: the primary may have made
+      // progress while its backup waited in the queue.
+      if (receiving != null && resume != null) {
+        resume.keep(primary?.snapshot());
+        final prefix = resume.prefix;
+        if (prefix != null &&
+            prefix.length >= 32 * 1024 &&
+            prefix.length < end - start + 1) {
+          receiving.base = prefix;
+          start += prefix.length;
+        }
+      }
+      // Like upstream, one first-byte timeout covers connecting and the
+      // response head together.
+      const firstByte = Duration(milliseconds: 5500);
+      request = await _client.getUrl(url).timeout(firstByte);
+      job.check();
+      job.requests.add(request);
+      deadline = Timer(const Duration(seconds: 15), () {
+        request?.abort(const HttpException('Range attempt timed out'));
+      });
+      request.headers
+        ..set(HttpHeaders.rangeHeader, 'bytes=$start-$end')
+        ..set(HttpHeaders.acceptEncodingHeader, 'identity')
+        ..set(HttpHeaders.userAgentHeader, userAgent)
+        ..set(HttpHeaders.refererHeader, referer);
+      final response = await request.close().timeout(
+        firstByte - clock.elapsed,
+      );
+      final headMs = clock.elapsedMicroseconds / 1000;
+      _headMs = _headMs == 0 ? headMs : _headMs * .7 + headMs * .3;
+      status = response.statusCode;
+      final match = RegExp(r'^bytes (\d+)-(\d+)/(\d+)$').firstMatch(
+        response.headers.value(HttpHeaders.contentRangeHeader) ?? '',
+      );
+      if (clip && match != null) {
+        // A probe may reach past the end of a file shorter than itself; the
+        // CDN then sends the bytes that exist.
+        final last = int.parse(match[3]!) - 1;
+        if (int.parse(match[2]!) == last && last < end) end = last;
+      }
+      if (response.statusCode != 206 ||
+          match == null ||
+          int.parse(match[1]!) != start ||
+          int.parse(match[2]!) != end) {
+        throw const HttpException('Invalid CDN Range response');
+      }
+      final total = int.parse(match[3]!);
+      if (total <= end || (track.total != null && total != track.total)) {
+        throw const HttpException('Inconsistent CDN resource length');
+      }
+      // Establish resource identity before retaining a partial response.
+      track.total ??= total;
+      final bytes = BytesBuilder(copy: false);
+      await for (final chunk in response.timeout(const Duration(seconds: 4))) {
+        job.check();
+        received += chunk.length;
+        autoConcurrency?.activity();
+        bytes.add(chunk);
+        if (bytes.length > end - start + 1) {
+          receiving?.chunks.clear();
+          throw const HttpException('Oversized CDN Range body');
+        }
+        receiving?.add(chunk, clock.elapsedMilliseconds);
+      }
+      if (bytes.length != end - start + 1) {
+        throw const HttpException('Truncated CDN Range body');
+      }
+      completed = true;
+      _measure(received, clock.elapsed);
+      track.resolver.success(url, bytes.length, clock.elapsed);
+      final result = BytesBuilder(copy: false);
+      if (receiving?.base case final base?) result.add(base);
+      result.add(bytes.takeBytes());
+      return _Piece(result.takeBytes(), total, url);
+    } catch (error) {
+      if (receiving != null) resume?.keep(receiving.snapshot());
+      if (!job.cancelled) {
+        track.resolver.failure(url, status: status, received: received);
+        if (status == 412 || status == 429) {
+          autoConcurrency?.pushback();
+        } else if (received == 0 && error is TimeoutException) {
+          autoConcurrency?.slow();
+        }
+      } else if (received >= 48 * 1024) {
+        track.resolver.sample(
+          url,
+          received * 1000000 / max(1, clock.elapsedMicroseconds),
+        );
+      }
+      rethrow;
+    } finally {
+      deadline?.cancel();
+      if (!completed) request?.abort();
+      job.requests.remove(request);
+      _release(rescue: rescue);
+    }
+  }
+
+  // Equivalent to startupAttempt / downloadPiece's Promise.any: stagger
+  // metadata at 0/120/300 ms, race startup heads immediately, and hedge media.
+  Future<_Piece> _race(
+    _Track track,
+    List<Uri> urls,
+    int start,
+    int end,
+    _Job parent, {
+    required int priority,
+    bool metadata = false,
+    bool startup = false,
+    bool hurry = false,
+    _Resume? resume,
+    _Feed? feed,
+  }) async {
+    final result = Completer<_Piece>();
+    final jobs = <_Job>[];
+    final timers = <Timer>[];
+    final launched = <int>{};
+    final receiving = List.generate(urls.length, (_) => _Receiving());
+    if (feed != null) receiving.forEach(feed.add);
+    int failures = 0;
+    void launch(int index) {
+      if (result.isCompleted || parent.cancelled || !launched.add(index)) {
+        return;
+      }
+      final job = _Job();
+      jobs.add(job);
+      parent.children.add(job);
+      _attempt(
+        track,
+        urls[index],
+        start,
+        end,
+        job,
+        rescue: index > 0,
+        priority: priority + (index > 0 && !metadata ? 20 : 0),
+        clip: metadata,
+        resume: resume,
+        receiving: metadata ? null : receiving[index],
+        primary: index > 0 ? receiving.first : null,
+      ).then(
+        (piece) {
+          if (!result.isCompleted) result.complete(piece);
+        },
+        onError: (Object error, StackTrace stack) {
+          failures++;
+          if (index == 0 && urls.length > 1 && !metadata) launch(1);
+          if (failures == urls.length && !result.isCompleted) {
+            result.completeError(error, stack);
+          }
+        },
+      );
+    }
+
+    launch(0);
+    for (var i = 1; i < urls.length; i++) {
+      final delay = metadata
+          ? (i == 1 ? 120 : 300)
+          : startup
+          ? 0
+          : hurry
+          ? min(250, _hedgeMs)
+          : _hedgeMs;
+      if (delay == 0) {
+        launch(i);
+      } else if (metadata) {
+        timers.add(Timer(Duration(milliseconds: delay), () => launch(i)));
+      } else {
+        // Checked every 50 ms like upstream, from the first check due.
+        void check() {
+          if (result.isCompleted || parent.cancelled) return;
+          if (_hedgeDue(
+            receiving.first,
+            delay,
+            track.resolver.speed(urls[i]),
+          )) {
+            launch(i);
+          } else {
+            timers.add(Timer(const Duration(milliseconds: 50), check));
+          }
+        }
+
+        timers.add(Timer(Duration(milliseconds: delay), check));
+      }
+    }
+    try {
+      return await parent.race(result.future);
+    } finally {
+      for (final timer in timers) {
+        timer.cancel();
+      }
+      for (final job in jobs) {
+        job.cancel();
+        parent.children.remove(job);
+      }
+    }
+  }
+
+  Future<_Piece> _download(
+    _Track track,
+    int start,
+    int end,
+    _Job job, {
+    List<Uri> preferred = const [],
+    int pieceIndex = 0,
+    int priority = 50,
+    bool metadata = false,
+    bool startup = false,
+    bool hurry = false,
+    _Feed? feed,
+  }) async {
+    final clock = Stopwatch()..start();
+    final resume = _Resume(end - start + 1);
+    Object error = const HttpException('No available CDN');
+    for (var round = 0; round < 3; round++) {
+      job.check();
+      if (round > 0) {
+        if (clock.elapsed > const Duration(seconds: 25)) break;
+        await job.race(
+          Future<void>.delayed(
+            Duration(milliseconds: 500 * (1 << (round - 1))),
+          ),
+        );
+      }
+      if (metadata) {
+        var urls = track.resolver.startupCandidates().take(3).toList();
+        if (urls.isEmpty && round > 0) {
+          urls = track.resolver.ordered(round).take(3).toList();
+        }
+        if (urls.isEmpty) break;
+        try {
+          return await _race(
+            track,
+            urls,
+            start,
+            end,
+            job,
+            priority: 220,
+            metadata: true,
+          );
+        } catch (e) {
+          error = e;
+        }
+        continue;
+      }
+      final candidates = track.resolver.pieceCandidates(
+        preferred,
+        pieceIndex,
+        round,
+      );
+      final limit = min(8, candidates.length);
+      final tried = <Uri>{};
+      while (tried.length < limit) {
+        job.check();
+        final untried = candidates.where((u) => !tried.contains(u)).toList();
+        final allowed = untried.where(track.resolver.bans.allows).toList();
+        final pair = (allowed.isEmpty ? untried : allowed)
+            .take(min(startup ? limit : 2, limit - tried.length))
+            .toList();
+        if (pair.isEmpty) break;
+        tried.addAll(pair);
+        try {
+          final piece = await _race(
+            track,
+            pair,
+            start,
+            end,
+            job,
+            priority: priority,
+            startup: startup,
+            hurry: hurry,
+            resume: resume,
+            feed: feed,
+          );
+          job.check();
+          autoConcurrency?.delivered(piece.bytes.length);
+          return piece;
+        } catch (e) {
+          error = e;
+        }
+      }
+    }
+    job.check();
+    throw error;
+  }
+
+  Future<void> _serve(HttpRequest request) async {
+    final track = _tracks[request.uri.path];
+    if (track == null || _closed) {
+      request.response.statusCode = HttpStatus.notFound;
+      await request.response.close();
+      return;
+    }
+    if (request.method != 'GET' && request.method != 'HEAD') {
+      request.response.statusCode = HttpStatus.methodNotAllowed;
+      await request.response.close();
+      return;
+    }
+    // dart:io never tells a handler that its client went away: writes to the
+    // dead connection are dropped or flush() never returns, and response.done
+    // only completes on close(). Own the socket instead, so that mpv closing
+    // it (a seek, a demuxer reopen) ends this request's downloads at once.
+    final Socket socket;
+    try {
+      socket = await request.response.detachSocket(writeHeaders: false);
+    } catch (_) {
+      return;
+    }
+    final job = _Job();
+    _jobs.add(job);
+    job._listeners.add(socket.destroy);
+    if (request.method == 'GET') {
+      // mpv reads a track over one connection. Its next request (a seek or a
+      // reopen) arrives before it closes the old one; stop the old one now.
+      track.request?.cancel();
+      track.request = job;
+      // mpv only asks again for bytes its cache lacks, i.e. upstream's seek
+      // outside the buffer.
+      if (track.opened) autoConcurrency?.newSession();
+      track.opened = true;
+    }
+    socket.listen(
+      null,
+      onError: (Object _) => job.cancel(),
+      onDone: job.cancel,
+      cancelOnError: true,
+    );
+    unawaited(socket.done.then((_) {}, onError: (Object _) => job.cancel()));
+    void writeHead(int status, int length, [String? contentRange]) {
+      socket.add(
+        ascii.encode(
+          'HTTP/1.1 $status ${_reasons[status]}\r\n'
+          'Content-Type: application/octet-stream\r\n'
+          'Accept-Ranges: bytes\r\n'
+          'Content-Length: $length\r\n'
+          '${contentRange == null ? '' : 'Content-Range: $contentRange\r\n'}'
+          'Connection: close\r\n'
+          '\r\n',
+        ),
+      );
+    }
+
+    bool sentHeaders = false;
+    try {
+      final range = request.headers.value(HttpHeaders.rangeHeader);
+      _Piece? probe;
+      if (track.total == null) {
+        // mpv opens a track from byte 0. The probe then fetches the first
+        // 64 KiB and doubles as the head, saving a round trip.
+        final fromStart = range == null || range.startsWith('bytes=0-');
+        probe = await _download(
+          track,
+          0,
+          fromStart ? 64 * 1024 - 1 : 0,
+          job,
+          metadata: true,
+        );
+        track.total = probe.total;
+      }
+      final total = track.total!;
+      final (start, end) = parseRange(range, total);
+      final status = range == null ? HttpStatus.ok : HttpStatus.partialContent;
+      final contentRange = range == null ? null : 'bytes $start-$end/$total';
+      if (request.method == 'HEAD') {
+        writeHead(status, end - start + 1, contentRange);
+        sentHeaders = true;
+      } else {
+        // A bounded window prevents mpv's open-ended ranges from buffering an
+        // entire movie in memory. Flush in file order with socket backpressure.
+        // Sliding bounded window: refill after each emitted piece, without
+        // waiting for the slowest member of a batch. Larger steady-state
+        // pieces amortize overseas request latency; keep the first one small.
+        final headEnd = min(end, start + 64 * 1024 - 1);
+        final head = probe != null && start == 0 && probe.bytes.length > headEnd
+            ? _Piece(
+                Uint8List.sublistView(probe.bytes, 0, headEnd + 1),
+                total,
+                probe.url,
+              )
+            : await _download(
+                track,
+                start,
+                headEnd,
+                job,
+                preferred: track.resolver.rangeCandidates(),
+                startup: true,
+                priority: 220,
+              );
+        job.check();
+        writeHead(status, end - start + 1, contentRange);
+        socket.add(head.bytes);
+        sentHeaders = true;
+        await job.race(socket.flush());
+        var cursor = headEnd + 1;
+        var index = 1;
+        int pieceBudget() {
+          final audioBudget = max(
+            1,
+            min(_normalLimit, (concurrency / 8).ceil()),
+          );
+          // Keep two audio pieces in flight so that one request's round trip
+          // overlaps the other's transfer; video keeps its share.
+          return track.isAudio
+              ? max(2, audioBudget)
+              : max(1, _normalLimit - audioBudget);
+        }
+
+        var budget = pieceBudget();
+        var preferred = <Uri>[head.url];
+        var primaries = <Uri>[];
+        var batchIndex = 0;
+        var size = 64 * 1024;
+        var written = headEnd + 1;
+        final pieces = <(_Feed, Future<(_Piece?, Object?, StackTrace?)>)>[];
+        void enqueue() {
+          if (cursor > end) return;
+          if (batchIndex >= primaries.length) {
+            final startupBatch = index <= budget;
+            preferred = track.resolver.rangeCandidates();
+            final proven = startupBatch
+                ? preferred
+                      .where(
+                        (url) =>
+                            url == head.url || track.resolver.speed(url) > 0,
+                      )
+                      .toList()
+                : preferred;
+            if (proven.isEmpty) proven.add(head.url);
+            // One 64 KiB audio piece per round trip capped audio near
+            // 1 Mbit/s on high-latency routes. Pieces of at least 256 KiB,
+            // larger on fast connections (up to 1 MiB), amortize it.
+            final window = min(
+              end - cursor + 1,
+              track.isAudio
+                  ? budget *
+                        max<int>(
+                          256 * 1024,
+                          _minChunk(end - cursor + 1, budget, preferred.length),
+                        )
+                  : 2 * 1024 * 1024 - 64 * 1024,
+            );
+            final floor = _minChunk(window, budget, preferred.length);
+            final count = min(budget, max(1, (window / floor).ceil()));
+            size = (window / count).ceil();
+            primaries = _assignments.assign(proven, track.resolver, count);
+            batchIndex = 0;
+          }
+          // Native mpv requests are open-ended rather than SIDX segments.
+          // Partition a bounded 2 MiB video window over the same piece budget
+          // instead of turning the upstream 64 KiB minimum into a fixed size.
+          final last = min(end, cursor + size - 1);
+          final primary = primaries[batchIndex++];
+          final feed = _Feed(cursor);
+          final result =
+              _download(
+                track,
+                cursor,
+                last,
+                job,
+                preferred: [
+                  primary,
+                  ...preferred.where((url) => url != primary),
+                ],
+                pieceIndex: index,
+                hurry: index <= budget,
+                priority: index <= budget
+                    ? 120 - min(30, index++)
+                    : 55 - min(20, index++ % budget),
+                feed: feed,
+              ).then<(_Piece?, Object?, StackTrace?)>(
+                (piece) => (piece, null, null),
+                onError: (Object error, StackTrace stack) =>
+                    (null, error, stack),
+              );
+          pieces.add((feed, result.whenComplete(feed.finish)));
+          cursor = last + 1;
+        }
+
+        for (var i = 0; i < budget; i++) {
+          enqueue();
+        }
+        while (pieces.isNotEmpty) {
+          final (feed, result) = pieces.first;
+          // Pass on the next piece's bytes as they arrive. Waiting for whole
+          // pieces that share a slow link with the rest in flight starved
+          // playback, audio first: its 64 KiB head lasts about two seconds.
+          while (!feed.done) {
+            if (feed.from(written) case final bytes?) {
+              socket.add(bytes);
+              written += bytes.length;
+              await job.race(socket.flush());
+            } else {
+              await job.race(feed.changed);
+            }
+            job.check();
+          }
+          pieces.removeAt(0);
+          final (piece, error, stack) = await result;
+          if (error != null) Error.throwWithStackTrace(error, stack!);
+          job.check();
+          if (piece!.total != total) {
+            throw const HttpException('Resource changed');
+          }
+          if (written < feed.start + piece.bytes.length) {
+            socket.add(
+              Uint8List.sublistView(piece.bytes, written - feed.start),
+            );
+            written = feed.start + piece.bytes.length;
+          }
+          await job.race(socket.flush());
+          job.check();
+          budget = pieceBudget();
+          while (pieces.length < budget && cursor <= end) {
+            enqueue();
+          }
+        }
+      }
+      await job.race(socket.close());
+    } on FormatException {
+      try {
+        writeHead(
+          HttpStatus.requestedRangeNotSatisfiable,
+          0,
+          'bytes */${track.total}',
+        );
+        await job.race(socket.close());
+      } catch (_) {}
+    } catch (_) {
+      // After the headers, the reset in finally makes a truncated byte stream
+      // visible to mpv instead of pretending it completed.
+      if (!sentHeaders) {
+        try {
+          writeHead(HttpStatus.badGateway, 0);
+          await job.race(socket.close());
+        } catch (_) {}
+      }
+    } finally {
+      job.cancel();
+      _jobs.remove(job);
+      if (identical(track.request, job)) track.request = null;
+    }
+  }
+
+  static const _reasons = {
+    HttpStatus.ok: 'OK',
+    HttpStatus.partialContent: 'Partial Content',
+    HttpStatus.requestedRangeNotSatisfiable: 'Range Not Satisfiable',
+    HttpStatus.badGateway: 'Bad Gateway',
+  };
+
+  static (int, int) parseRange(String? value, int total) {
+    if (value == null) return (0, total - 1);
+    final match = RegExp(r'^bytes=(\d*)-(\d*)$').firstMatch(value);
+    if (match == null || (match[1]!.isEmpty && match[2]!.isEmpty)) {
+      throw const FormatException('Invalid Range');
+    }
+    final int start;
+    final int end;
+    if (match[1]!.isEmpty) {
+      final suffix = int.parse(match[2]!);
+      if (suffix <= 0) throw const FormatException('Invalid suffix');
+      start = max(0, total - suffix);
+      end = total - 1;
+    } else {
+      start = int.parse(match[1]!);
+      end = match[2]!.isEmpty
+          ? total - 1
+          : min(int.parse(match[2]!), total - 1);
+    }
+    if (start >= total || end < start) {
+      throw const FormatException('Unsatisfiable Range');
+    }
+    return (start, end);
+  }
+}
+
+class _Track {
+  _Track(this.resolver, this.isAudio);
+  final bool isAudio;
+  final RipperCdnResolver resolver;
+  int? total;
+  _Job? request;
+  bool opened = false;
+}
+
+class _Piece {
+  _Piece(this.bytes, this.total, this.url);
+  final Uri url;
+  final Uint8List bytes;
+  final int total;
+}
+
+class _Resume {
+  _Resume(this.length);
+  final int length;
+  Uint8List? prefix;
+
+  void keep(Uint8List? bytes) {
+    if (bytes != null &&
+        bytes.length > (prefix?.length ?? 0) &&
+        bytes.length < length) {
+      prefix = bytes;
+    }
+  }
+}
+
+class _Receiving {
+  Uint8List? base;
+  final chunks = <List<int>>[];
+  void Function()? onData;
+  // From the moment this copy held a connection: when its first and latest
+  // bytes arrived, and how many it received itself (the base excluded).
+  Stopwatch? clock;
+  int firstAt = 0;
+  int lastAt = 0;
+  int received = 0;
+
+  void add(List<int> chunk, int at) {
+    if (received == 0) firstAt = at;
+    lastAt = at;
+    received += chunk.length;
+    chunks.add(chunk);
+    onData?.call();
+  }
+
+  int get length => chunks.fold(base?.length ?? 0, (n, c) => n + c.length);
+  Uint8List snapshot() {
+    final bytes = BytesBuilder(copy: false);
+    if (base != null) bytes.add(base!);
+    for (final chunk in chunks) {
+      bytes.add(chunk);
+    }
+    return bytes.takeBytes();
+  }
+
+  /// The received bytes from [offset] within the piece on.
+  Uint8List from(int offset) {
+    final bytes = BytesBuilder(copy: false);
+    var at = 0;
+    for (final part in [?base, ...chunks]) {
+      final next = at + part.length;
+      if (next > offset) {
+        bytes.add(at >= offset ? part : part.sublist(offset - at));
+      }
+      at = next;
+    }
+    return bytes.takeBytes();
+  }
+}
+
+/// A piece still downloading, readable up to its furthest replica. Every
+/// replica holds a verified prefix of the same bytes.
+class _Feed {
+  _Feed(this.start);
+  final int start;
+  final _replicas = <_Receiving>[];
+  Completer<void>? _waiter;
+  bool done = false;
+
+  void add(_Receiving replica) {
+    _replicas.add(replica);
+    replica.onData = _wake;
+  }
+
+  void _wake() {
+    _waiter?.complete();
+    _waiter = null;
+  }
+
+  void finish() {
+    done = true;
+    _wake();
+  }
+
+  /// Completes when a replica receives more or the piece finishes.
+  Future<void> get changed => (_waiter ??= Completer<void>()).future;
+
+  /// Bytes from file offset [position] on, if any have arrived.
+  Uint8List? from(int position) {
+    final offset = position - start;
+    _Receiving? best;
+    var most = offset;
+    for (final replica in _replicas) {
+      final length = replica.length;
+      if (length > most) {
+        most = length;
+        best = replica;
+      }
+    }
+    return best?.from(offset);
+  }
+}
+
+class _Job {
+  final requests = <HttpClientRequest>{};
+  final children = <_Job>{};
+  final _listeners = <void Function()>{};
+  bool cancelled = false;
+
+  Future<T> race<T>(Future<T> operation) async {
+    final result = Completer<T>();
+    void cancelWait() {
+      if (!result.isCompleted) {
+        result.completeError(const HttpException('Cancelled'));
+      }
+    }
+
+    _listeners.add(cancelWait);
+    operation.then(
+      (value) {
+        if (!result.isCompleted) result.complete(value);
+      },
+      onError: (Object error, StackTrace stack) {
+        if (!result.isCompleted) result.completeError(error, stack);
+      },
+    );
+    if (cancelled) cancelWait();
+    try {
+      return await result.future;
+    } finally {
+      _listeners.remove(cancelWait);
+    }
+  }
+
+  void check() {
+    if (cancelled) throw const HttpException('Download cancelled');
+  }
+
+  void cancel() {
+    if (cancelled) return;
+    cancelled = true;
+    for (final listener in _listeners.toList()) {
+      listener();
+    }
+    for (final request in requests) {
+      request.abort();
+    }
+    for (final child in children) {
+      child.cancel();
+    }
+  }
+}
+
+class _Waiter {
+  _Waiter(this.rescue, this.priority, this.sequence);
+  final bool rescue;
+  final int priority;
+  final int sequence;
+  final ready = Completer<void>();
+}
