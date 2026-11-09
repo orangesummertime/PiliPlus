@@ -1212,7 +1212,6 @@ class ReplyItemGrpc extends StatelessWidget {
                             Duration(
                               seconds: DurationUtils.parseDuration(matchStr),
                             ),
-                            isSeek: false,
                           );
                         } catch (e) {
                           SmartDialog.showToast('跳转失败: $e');
