@@ -1,5 +1,6 @@
 import 'package:PiliPlus/utils/black_mid_rules.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
+import 'package:flutter/foundation.dart' show ValueNotifier;
 
 class GlobalData {
   int imgQuality = Pref.picQuality;
@@ -19,6 +20,12 @@ class GlobalData {
   /// UIDs never treated as blocked: the whitelist beats the local blacklist
   /// and the online rule lists.
   Set<int> whiteMids = Pref.whiteMids;
+
+  /// Bumped whenever the blacklist, the whitelist or a rule list changes,
+  /// so badges showing a user's status can update in place.
+  final midListsRevision = ValueNotifier(0);
+
+  void midListsChanged() => midListsRevision.value++;
 
   /// Whether [mid] is blocked locally or by an online UID rule, and not
   /// whitelisted.

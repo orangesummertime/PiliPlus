@@ -91,9 +91,169 @@ void showBlackMidInfo(BuildContext context, int mid) {
           onPressed: () {
             Get.back();
             Pref.setWhiteMid(mid);
-            SmartDialog.showToast('已加入白名单，刷新后生效');
+            SmartDialog.showToast('已加入白名单');
           },
           child: const Text('加入白名单'),
+        ),
+        TextButton(onPressed: Get.back, child: const Text('确定')),
+      ],
+    ),
+  );
+}
+
+/// Where a user stands in the local lists, for profile cards.
+enum MidListStatus { white, black }
+
+/// Black / white list status of [mid]: null when the user is on neither.
+({MidListStatus status, bool local, bool rule})? midListStatus(int mid) {
+  final data = GlobalData();
+  final local = data.blackMids.contains(mid);
+  final rule = BlackMidRules.contains(mid);
+  if (data.whiteMids.contains(mid)) {
+    return (status: MidListStatus.white, local: local, rule: rule);
+  }
+  if (local || rule) {
+    return (status: MidListStatus.black, local: local, rule: rule);
+  }
+  return null;
+}
+
+/// A pill for profile cards: 本地黑名单 / 云端黑名单 / 白名单, with an icon
+/// telling them apart. Tap for the reason and to (un)whitelist. Updates in
+/// place when the lists change.
+class MidListStatusPill extends StatelessWidget {
+  const MidListStatusPill({super.key, required this.mid});
+
+  final int mid;
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: GlobalData().midListsRevision,
+    builder: (context, _, _) {
+      final info = midListStatus(mid);
+      if (info == null) return const SizedBox.shrink();
+      final colorScheme = ColorScheme.of(context);
+      final dark = colorScheme.brightness == Brightness.dark;
+      final (
+        IconData icon,
+        String text,
+        Color fg,
+        Color bg,
+      ) = switch (info.status) {
+        MidListStatus.white => (
+          Icons.verified_user_rounded,
+          info.local || info.rule ? '白名单 · 已豁免' : '白名单',
+          dark ? const Color(0xFF81C995) : const Color(0xFF1E8E3E),
+          (dark ? const Color(0xFF81C995) : const Color(0xFF1E8E3E)).withValues(
+            alpha: 0.14,
+          ),
+        ),
+        MidListStatus.black => (
+          info.local ? Icons.block_rounded : Icons.cloud_off_rounded,
+          info.local && info.rule
+              ? '本地 · 云端黑名单'
+              : info.local
+              ? '本地黑名单'
+              : '云端黑名单',
+          colorScheme.error,
+          colorScheme.error.withValues(alpha: 0.12),
+        ),
+      };
+      return Semantics(
+        button: true,
+        label: text,
+        child: GestureDetector(
+          behavior: .opaque,
+          onTap: () => info.status == MidListStatus.white
+              ? showWhiteMidInfo(context, mid)
+              : showBlackMidInfo(context, mid),
+          child: Container(
+            height: 18,
+            padding: const .only(left: 5, right: 7),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: const .all(.circular(9)),
+              border: Border.all(color: fg.withValues(alpha: 0.35), width: 0.6),
+            ),
+            child: Row(
+              mainAxisSize: .min,
+              spacing: 3,
+              children: [
+                Icon(icon, size: 12, color: fg),
+                Text(
+                  text,
+                  strutStyle: const StrutStyle(
+                    height: 1,
+                    leading: 0,
+                    fontSize: 10,
+                    fontWeight: .bold,
+                  ),
+                  style: TextStyle(
+                    height: 1,
+                    fontSize: 10,
+                    fontWeight: .bold,
+                    color: fg,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// The whitelist entry of [mid]: what it overrides, with a button to remove.
+void showWhiteMidInfo(BuildContext context, int mid) {
+  final theme = Theme.of(context);
+  final info = midListStatus(mid);
+  final overrides = [
+    if (info?.local ?? false) '本地黑名单',
+    if (info?.rule ?? false) '在线规则 ${BlackMidRules.sourceOf(mid)}',
+  ];
+  final reason = BlackMidReasons.of(mid);
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('白名单'),
+      content: Column(
+        mainAxisSize: .min,
+        crossAxisAlignment: .start,
+        spacing: 12,
+        children: [
+          Text(
+            overrides.isEmpty
+                ? '已加入白名单：不会被本地黑名单或在线规则屏蔽。'
+                : '已加入白名单，以下屏蔽对 TA 不生效：',
+          ),
+          for (final o in overrides)
+            Text(
+              '· $o',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+          if (reason != null)
+            Text(
+              '拉黑原因：${reason.reason}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Get.back();
+            Pref.removeWhiteMid(mid);
+            SmartDialog.showToast('已移出白名单');
+          },
+          child: Text(
+            '移出白名单',
+            style: TextStyle(color: theme.colorScheme.error),
+          ),
         ),
         TextButton(onPressed: Get.back, child: const Text('确定')),
       ],

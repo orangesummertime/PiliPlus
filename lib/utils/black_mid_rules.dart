@@ -225,6 +225,7 @@ abstract final class BlackMidRules {
   static Future<void> _setStore(String url, BlackMidStore store) async {
     await compute(_writeStore, (_storePath(url), store));
     _stores[url] = store;
+    GlobalData().midListsChanged();
   }
 
   /// Rules used to copy their UIDs into the local blacklist (and remember
@@ -629,6 +630,7 @@ abstract final class BlackMidRules {
   static Future<void> remove(String url) => _locked(() async {
     _rules.removeWhere((e) => e.url == url);
     _stores.remove(url);
+    GlobalData().midListsChanged();
     await _saveRules();
     try {
       await File(_storePath(url)).delete();

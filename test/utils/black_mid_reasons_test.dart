@@ -59,4 +59,37 @@ void main() {
     expect(find.text('来源：本地黑名单'), findsOneWidget);
     expect(find.text('加入白名单'), findsOneWidget);
   });
+
+  testWidgets('资料卡标记：本地 / 云端 / 白名单，变化时即时更新', (tester) async {
+    // mid 3, 4 are on the local blacklist (set above)
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              MidListStatusPill(mid: 3),
+              MidListStatusPill(mid: 99), // on no list
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.text('本地黑名单'), findsOneWidget);
+    expect(find.byIcon(Icons.block_rounded), findsOneWidget);
+
+    GlobalData().whiteMids.add(3);
+    GlobalData().midListsChanged();
+    await tester.pump();
+    expect(find.text('本地黑名单'), findsNothing);
+    expect(find.text('白名单 · 已豁免'), findsOneWidget);
+    expect(find.byIcon(Icons.verified_user_rounded), findsOneWidget);
+
+    await tester.tap(find.text('白名单 · 已豁免'));
+    await tester.pumpAndSettle();
+    expect(find.text('· 本地黑名单'), findsOneWidget);
+    expect(find.text('移出白名单'), findsOneWidget);
+
+    GlobalData().whiteMids.remove(3);
+    GlobalData().midListsChanged();
+  });
 }

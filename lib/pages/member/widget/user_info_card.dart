@@ -19,6 +19,7 @@ import 'package:PiliPlus/models_new/space/space/images.dart';
 import 'package:PiliPlus/models_new/space/space/live.dart';
 import 'package:PiliPlus/models_new/space/space/pr_info.dart';
 import 'package:PiliPlus/models_new/space/space/top.dart';
+import 'package:PiliPlus/pages/common/reply/black_mid_badge.dart';
 import 'package:PiliPlus/pages/fan/view.dart';
 import 'package:PiliPlus/pages/follow/view.dart';
 import 'package:PiliPlus/pages/follow_type/followed/view.dart';
@@ -261,6 +262,10 @@ class UserInfoCard extends StatelessWidget {
           //     },
           //   ),
           ?liveMedal,
+          // on the local blacklist / an online rule list / the whitelist
+          if (!isOwner)
+            if (int.tryParse(card.mid ?? '') case final mid?)
+              MidListStatusPill(mid: mid),
         ],
       ),
     );

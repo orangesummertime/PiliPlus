@@ -68,8 +68,10 @@ abstract final class Pref {
   static Set<int> get blackMids =>
       _localCache.get(LocalCacheKey.blackMids, defaultValue: <int>{});
 
-  static set blackMids(Set<int> blackMidsSet) =>
-      _localCache.put(LocalCacheKey.blackMids, blackMidsSet);
+  static set blackMids(Set<int> blackMidsSet) {
+    _localCache.put(LocalCacheKey.blackMids, blackMidsSet);
+    GlobalData().midListsChanged();
+  }
 
   static RuleFilter get danmakuFilterRule => _localCache.get(
     LocalCacheKey.danmakuFilterRules,
@@ -84,19 +86,21 @@ abstract final class Pref {
       LocalCacheKey.blackMids,
       GlobalData().blackMids..add(mid),
     );
+    GlobalData().midListsChanged();
   }
 
   static Set<int> get whiteMids =>
       _localCache.get(LocalCacheKey.whiteMids, defaultValue: <int>{});
 
-  static void setWhiteMid(int mid) => _localCache.put(
-    LocalCacheKey.whiteMids,
-    GlobalData().whiteMids..add(mid),
-  );
+  static void setWhiteMid(int mid) {
+    _localCache.put(LocalCacheKey.whiteMids, GlobalData().whiteMids..add(mid));
+    GlobalData().midListsChanged();
+  }
 
   static void removeWhiteMid(int mid) {
     if (GlobalData().whiteMids.remove(mid)) {
       _localCache.put(LocalCacheKey.whiteMids, GlobalData().whiteMids);
+      GlobalData().midListsChanged();
     }
   }
 
@@ -106,6 +110,7 @@ abstract final class Pref {
       LocalCacheKey.blackMids,
       GlobalData().blackMids..remove(mid),
     );
+    GlobalData().midListsChanged();
   }
 
   static MemberTabType get memberTab =>
